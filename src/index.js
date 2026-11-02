@@ -206,27 +206,18 @@ function prepositionOf(text) {
   return PREPOSITIONS.includes(last) ? last : null;
 }
 
-// Пример с пропуском вместо чанка: «I look forward to it.» → «I ___ it.».
-function exampleWithGap(chunk) {
-  if (!chunk.example) return null;
-  const at = chunk.example.toLowerCase().indexOf(chunk.text.toLowerCase());
-  if (at < 0) return null;
-  return chunk.example.slice(0, at) + "___" + chunk.example.slice(at + chunk.text.length);
-}
-
 // Четыре варианта: правильный ответ и три другие из лексики студента.
 function textOptions(answer, texts) {
   const others = shuffle(texts.filter((text) => text !== answer)).slice(0, 3);
   return shuffle([answer, ...others]);
 }
 
-// Квиз: четыре типа вопросов, тип и чанк выбираются случайно из подходящих.
+// Квиз: перевод или предлог, тип и чанк выбираются случайно из подходящих.
 async function sendQuiz(env, db, chatId, student, count = 0, progress = { score: 0, mistakes: [] }) {
   const all = await db.chunks(student.id);
   const texts = [...new Set(all.map((chunk) => chunk.text))];
   const pools = {
     translation: all.filter((chunk) => chunk.translation),
-    gap: all.filter((chunk) => exampleWithGap(chunk)),
     preposition: all.filter((chunk) => prepositionOf(chunk.text)),
   };
   const kinds = Object.keys(pools).filter((kind) => pools[kind].length);
@@ -247,10 +238,6 @@ async function sendQuiz(env, db, chatId, student, count = 0, progress = { score:
   let options;
   if (kind === "translation") {
     question = `Как сказать по-английски: «${chunk.translation}»?`;
-    answer = chunk.text;
-    options = textOptions(answer, texts);
-  } else if (kind === "gap") {
-    question = `Какой чанк пропущен? «${exampleWithGap(chunk)}»`;
     answer = chunk.text;
     options = textOptions(answer, texts);
   } else {

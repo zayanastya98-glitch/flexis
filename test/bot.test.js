@@ -810,27 +810,6 @@ test("квиз на пропуск в примере и на предлог", as
   }
 });
 
-test("квиз на пропуск в примере заменяет чанк на пропуск", async (t) => {
-  // Первый подходящий тип — пропуск в примере, первый чанк — «catch a bus».
-  t.mock.method(Math, "random", () => 0);
-  const { env, sent } = await environment();
-  const { db, sonya } = await studentWithFrame(env);
-  await db.addChunks(
-    [sonya.id],
-    [
-      ["catch a bus", "", "I need to catch a bus.", ""],
-      ["feel anxious", "", "", ""],
-      ["pass the time", "", "", ""],
-      ["take a break", "", "", ""],
-    ],
-    DAY,
-  );
-  await say(env, STUDENT, "🧩 Квиз");
-  const poll = sent.find((item) => item.method === "sendPoll");
-  assert.equal(poll.body.question, "Какой чанк пропущен? «I need to ___.»");
-  assert.equal(poll.body.options[poll.body.correct_option_id].text, "catch a bus");
-});
-
 test("квиз останавливается кнопкой меню", async () => {
   const { env, sent } = await environment();
   const { db, sonya } = await studentWithFrame(env);
