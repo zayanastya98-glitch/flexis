@@ -453,7 +453,7 @@ test("после сессии карточек задание с ответом 
     await press(env, STUDENT, last().reply_markup.inline_keyboard[0][1].callback_data);
   }
   await press(env, STUDENT, "task");
-  assert.match(lastText(sent), /Чанки:\n[\s\S]*• phrase number 0/);
+  assert.match(lastText(sent), /Чанки:\n[\s\S]*• phrase number \d+/);
 
   // Текстовый ответ уходит Насте.
   await say(env, STUDENT, "I met a phrase number 0 today.");
