@@ -44,6 +44,7 @@ const TEACHER_HELP =
   "/students — список студентов и их ID\n" +
   "/add — добавить лексику\n" +
   "/note — отправить заметку с урока\n" +
+  "/reset — обнулить прогресс студента\n" +
   "/list — посмотреть лексику студента\n" +
   "/delete номер — удалить чанк\n" +
   "/answers — последние ответы студентов\n" +
@@ -230,6 +231,17 @@ async function onCommand(env, db, message, command, argument) {
       chatId,
       command === "add" ? "Кому добавить лексику?" : "Чью лексику показать?",
       await studentPicker(db, command === "add" ? "addfor" : "listfor", command === "add"),
+    );
+  } else if (command === "reset") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Студентов пока нет: /addstudent Имя");
+      return;
+    }
+    await send(
+      env,
+      chatId,
+      "Чей прогресс обнулить?",
+      await studentPicker(db, "resetfor", false),
     );
   } else if (command === "note") {
     if (!(await db.students()).length) {
@@ -462,6 +474,33 @@ async function onButton(env, db, query) {
   const userId = query.from.id;
   const [action, value] = query.data.split(":");
   const id = Number(value);
+
+  if (action === "resetfor" || action === "resetyes") {
+    if (!isTeacher(env, userId)) return;
+    const student = await db.student(id);
+    if (!student) return;
+    if (action === "resetfor") {
+      await telegram(env, "editMessageText", {
+        chat_id: chatId,
+        message_id: messageId,
+        text:
+          `Обнулить прогресс: ${student.name}?\n\n` +
+          "Сбросятся повторения карточек, ответы и настройки уведомлений. " +
+          "Лексика и заметки останутся.",
+        reply_markup: {
+          inline_keyboard: [[inline("Да, обнулить", `resetyes:${student.id}`)]],
+        },
+      });
+      return;
+    }
+    await db.resetProgress(student.id, clock(env).date);
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Прогресс обнулён: ${student.name}.`,
+    });
+    return;
+  }
 
   if (action === "noteto") {
     if (!isTeacher(env, userId)) return;

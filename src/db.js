@@ -282,6 +282,24 @@ export class Database {
     );
   }
 
+  // Начало с чистого листа: лексика и заметки остаются.
+  resetProgress(studentId, today) {
+    return this.d1.batch([
+      this.d1
+        .prepare(
+          "UPDATE chunks SET box = 1, due_date = ?, last_sent = NULL WHERE student_id = ?",
+        )
+        .bind(today, studentId),
+      this.d1.prepare("DELETE FROM answers WHERE student_id = ?").bind(studentId),
+      this.d1
+        .prepare(
+          `UPDATE students SET notify_time = '10:00', notify_chunk = 1, notify_frame = 0,
+             notify_train = 0, last_notified = NULL WHERE id = ?`,
+        )
+        .bind(studentId),
+    ]);
+  }
+
   // ---------- Заметки с уроков ----------
   addNote(studentId, lessonDate, text) {
     return this.run(

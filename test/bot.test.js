@@ -374,6 +374,40 @@ test("заметка с урока приходит студенту и хран
   assert.equal((await db.notes(anna.id)).length, 1);
 });
 
+test("сброс прогресса оставляет лексику и заметки", async () => {
+  const { env, sent } = await environment();
+  await say(env, TEACHER, "/addstudent Соня");
+  await say(env, TEACHER, "/addstudent Анна");
+  const db = new Database(env.DB);
+  const [anna, sonya] = await db.students();
+  await db.addChunks([sonya.id], [["a", "", "", "x..."]], DAY);
+  await db.addChunks([anna.id], [["b", "", "", ""]], DAY);
+  await db.addNote(sonya.id, DAY, "заметка");
+  await db.addAnswer(sonya.id, "x...", "ответ");
+  const [chunk] = await db.chunks(sonya.id);
+  const [other] = await db.chunks(anna.id);
+  await db.review(chunk.id, sonya.id, true, DAY);
+  await db.review(other.id, anna.id, true, DAY);
+  await db.toggleNotification(sonya.id, "frame");
+
+  // Посторонний не может сбросить, а выбор студента ещё ничего не меняет.
+  await press(env, 99, `resetyes:${sonya.id}`);
+  await say(env, TEACHER, "/reset");
+  await press(env, TEACHER, `resetfor:${sonya.id}`);
+  assert.equal((await db.chunks(sonya.id))[0].box, 2);
+  assert.match(lastText(sent), /Лексика и заметки останутся/);
+
+  await press(env, TEACHER, `resetyes:${sonya.id}`);
+  const [after] = await db.chunks(sonya.id);
+  assert.equal(after.box, 1);
+  assert.equal(after.last_sent, null);
+  assert.ok(await db.nextCard(sonya.id, "2099-01-01"));
+  assert.equal((await db.student(sonya.id)).notify_frame, 0);
+  assert.equal((await db.recentAnswers()).length, 0);
+  assert.equal((await db.notes(sonya.id)).length, 1);
+  assert.equal((await db.chunks(anna.id))[0].box, 2);
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>
