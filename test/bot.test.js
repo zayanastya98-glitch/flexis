@@ -1259,7 +1259,13 @@ test("/preview показывает учительнице задание сту
   const { db, sonya } = await studentWithFrame(env);
   await say(env, TEACHER, "/preview");
   await press(env, TEACHER, `previewfor:${sonya.id}`);
-  assert.match(lastText(sent), /как его видит студентка[\s\S]*I used to\.\.\./);
+  assert.match(lastText(sent), /Что показать/);
+  await press(env, TEACHER, `previewframe:${sonya.id}`);
+  assert.match(lastText(sent), /Как видит ученик[\s\S]*I used to\.\.\./);
+  await press(env, TEACHER, `previewcard:${sonya.id}`);
+  assert.match(lastText(sent), /Как видит ученик/);
+  await press(env, TEACHER, `previewtask:${sonya.id}`);
+  assert.match(lastText(sent), /📝 Задание[\s\S]*Чанки:/);
 
   sent.length = 0;
   await press(env, STUDENT, `previewfor:${sonya.id}`);

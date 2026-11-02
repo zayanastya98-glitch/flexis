@@ -1139,20 +1139,67 @@ async function onButton(env, db, query) {
   const [action, value, extra] = query.data.split(":");
   const id = Number(value);
 
-  if (action === "previewfor" || action === "previewnext") {
+  // Просмотр глазами студента: учительница выбирает, что показать.
+  if (action === "previewfor") {
     if (!isTeacher(env, userId)) return;
     const target = await db.student(id);
     if (!target) return;
-    const chunk = await db.randomFrame(target.id);
-    if (!chunk) {
-      await send(env, chatId, `У ученика ${target.name} пока нет заданий «Закончи фразу».`);
+    await send(env, chatId, `Что показать у ученика ${target.name}?`, {
+      inline_keyboard: [
+        [inline("✍️ Закончи фразу", `previewframe:${target.id}`)],
+        [inline("🃏 Карточка", `previewcard:${target.id}`)],
+        [inline("🗣 Задание после карточек", `previewtask:${target.id}`)],
+      ],
+    });
+    return;
+  }
+
+  if (action === "previewframe" || action === "previewcard" || action === "previewtask") {
+    if (!isTeacher(env, userId)) return;
+    const target = await db.student(id);
+    if (!target) return;
+    const next = { inline_keyboard: [[inline("➡️ Другая", `${action}:${target.id}`)]] };
+    const head = `Как видит ученик ${target.name}:\n\n`;
+    if (action === "previewframe") {
+      const chunk = await db.randomFrame(target.id);
+      if (!chunk) {
+        await send(env, chatId, `У ученика ${target.name} пока нет заданий «Закончи фразу».`);
+        return;
+      }
+      await send(env, chatId, `${head}Закончи фразу о себе:\n\n${chunk.frame}`, next);
       return;
     }
+    if (action === "previewcard") {
+      const chunks = await db.chunks(target.id);
+      if (!chunks.length) {
+        await send(env, chatId, `У ученика ${target.name} пока нет чанков.`);
+        return;
+      }
+      const chunk = chunks[Math.floor(Math.random() * chunks.length)];
+      // Как в карточках: иногда перевод, иногда английский. Прогресс не меняется.
+      const front =
+        chunk.translation && Math.random() < 0.5
+          ? `Как сказать по-английски?\n\n${chunk.translation}`
+          : chunk.text;
+      await send(env, chatId, `${head}${front}`, next);
+      return;
+    }
+    // Задание после карточек: 5 случайных чанков, как в настоящем задании.
+    const chunks = (await db.chunks(target.id)).map((row) => row.text);
+    const picked = chunks.sort(() => Math.random() - 0.5).slice(0, 5);
+    if (!picked.length) {
+      await send(env, chatId, `У ученика ${target.name} пока нет чанков.`);
+      return;
+    }
+    const questions = await makeQuestions(env, picked);
+    const intro = questions
+      ? `Ответь на вопросы (один, два или все), используя чанки ниже. Можно письменно или голосовым:\n\n${questions.join("\n")}`
+      : "Напиши по одному предложению с каждым чанком. Можно письменно или голосовым:";
     await send(
       env,
       chatId,
-      `Задание ученика ${target.name}, как его видит студентка:\n\nЗакончи фразу о себе:\n\n${chunk.frame}`,
-      { inline_keyboard: [[inline("➡️ Другая", `previewnext:${target.id}`)]] },
+      `${head}📝 Задание\n\n${intro}\n\nЧанки:\n${picked.map((chunk) => `• ${chunk}`).join("\n")}`,
+      next,
     );
     return;
   }
