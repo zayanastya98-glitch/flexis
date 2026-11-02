@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { Database, NOTIFY_BATCH } from "../src/db.js";
 import worker, { parseChunks } from "../src/index.js";
+import { chunkKey, compareChunks, findDuplicatePairs } from "../src/similar.js";
 
 const DAY = "2026-11-02";
 const TEACHER = 1;
@@ -436,6 +437,67 @@ test("можно удалить несколько чанков сразу", asy
   assert.match(lastText(sent), /Напиши так/);
   await say(env, 99, `/delete ${c.id}`);
   assert.equal((await db.chunks(sonya.id)).length, 1);
+});
+
+test("одинаковые и похожие чанки распознаются", () => {
+  assert.equal(chunkKey("I feel anxious!"), chunkKey("feel Anxious"));
+  assert.equal(chunkKey("a sore throat"), chunkKey("sore throat"));
+
+  const existing = [
+    { id: 1, text: "get paid the minimum wage" },
+    { id: 2, text: "pass the ball" },
+    { id: 3, text: "feel anxious" },
+    { id: 4, text: "I got sad" },
+  ];
+  const rows = ["Get paid the minimum wage.", "getting paid the minimum wage",
+    "pass the salt", "feel anxious before a flight", "I got sick", "catch a bus",
+    "catch a bus"].map((text) => [text, "", "", ""]);
+  const { fresh, duplicates, similar } = compareChunks(existing, rows);
+  assert.deepEqual(duplicates, ["Get paid the minimum wage.", "catch a bus"]);
+  assert.deepEqual(similar.map((item) => [item.text, item.match.id]), [
+    ["getting paid the minimum wage", 1],
+    ["feel anxious before a flight", 3],
+  ]);
+  assert.deepEqual(fresh.map((row) => row[0]), [
+    "getting paid the minimum wage", "pass the salt",
+    "feel anxious before a flight", "I got sick", "catch a bus",
+  ]);
+});
+
+test("бот пропускает повторы и сообщает о похожих", async () => {
+  const { env, sent } = await environment();
+  await say(env, TEACHER, "/addstudent Соня");
+  await say(env, TEACHER, "/addstudent Анна");
+  const db = new Database(env.DB);
+  const [anna, sonya] = await db.students();
+  await db.addChunks([sonya.id], [["feel anxious", "", "", ""]], DAY);
+  const [old] = await db.chunks(sonya.id);
+
+  await say(env, TEACHER, "/add");
+  await press(env, TEACHER, `addfor:${sonya.id}`);
+  await say(env, TEACHER, "I feel anxious\nfeel anxious before a flight\ncatch a bus");
+  assert.match(lastText(sent), /^Добавлено чанков: 2\.\nПропущено повторов: 1\./);
+  assert.ok(lastText(sent).includes(`похоже на №${old.id} «feel anxious»`));
+  assert.equal((await db.chunks(sonya.id)).length, 3);
+
+  // Для «всем» проверка идёт у каждого студента отдельно.
+  await say(env, TEACHER, "/add");
+  await press(env, TEACHER, "addfor:all");
+  await say(env, TEACHER, "catch a bus");
+  assert.equal((await db.chunks(sonya.id)).length, 3);
+  assert.equal((await db.chunks(anna.id)).length, 1);
+
+  await say(env, TEACHER, "/dupes");
+  await press(env, TEACHER, `dupesfor:${sonya.id}`);
+  assert.match(lastText(sent), /≈/);
+
+  await say(env, STUDENT, sonya.code);
+  await say(env, STUDENT, "➕ Добавить чанк");
+  const count = sent.length;
+  await say(env, STUDENT, "catch a bus");
+  assert.match(lastText(sent), /Уже есть, не добавлено: catch a bus/);
+  assert.equal(sent.length, count + 1);
+  assert.equal((await db.chunks(sonya.id)).length, 3);
 });
 
 test("ошибка Telegram не ломает ответ сервера", async () => {

@@ -1,6 +1,7 @@
 // Telegram-бот для отработки чанков на Cloudflare Workers.
 // Настройка описана в README.md.
 import { Database } from "./db.js";
+import { compareChunks, findDuplicatePairs } from "./similar.js";
 
 const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
@@ -9,6 +10,7 @@ const ADD_CHUNK = "➕ Добавить чанк";
 const NOTES = "📝 Заметки";
 // Запас до лимита Telegram: к тексту добавляется заголовок с датой.
 const MAX_NOTE_LENGTH = 3900;
+const MAX_DUPES_CHECK = 150;
 // Сколько чанков студент может добавить одним сообщением.
 const MAX_STUDENT_CHUNKS = 20;
 const MENU = {
@@ -44,6 +46,7 @@ const TEACHER_HELP =
   "/students — список студентов и их ID\n" +
   "/add — добавить лексику\n" +
   "/note — отправить заметку с урока\n" +
+  "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
   "/list — посмотреть лексику студента\n" +
   "/delete 12 15 20 — удалить чанки по номерам\n" +
@@ -58,6 +61,7 @@ const TEACHER_COMMANDS = [
   { command: "list", description: "Лексика студента" },
   { command: "answers", description: "Ответы студентов" },
   { command: "delete", description: "Удалить чанки: /delete 12 15" },
+  { command: "dupes", description: "Найти повторы в лексике" },
   { command: "reset", description: "Обнулить прогресс студента" },
   { command: "logout", description: "Выйти из аккаунта студента" },
   { command: "cancel", description: "Отменить действие" },
@@ -260,6 +264,17 @@ async function onCommand(env, db, message, command, argument) {
       command === "add" ? "Кому добавить лексику?" : "Чью лексику показать?",
       await studentPicker(db, command === "add" ? "addfor" : "listfor", command === "add"),
     );
+  } else if (command === "dupes") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Студентов пока нет: /addstudent Имя");
+      return;
+    }
+    await send(
+      env,
+      chatId,
+      "Где искать повторы?",
+      await studentPicker(db, "dupesfor", false),
+    );
   } else if (command === "reset") {
     if (!(await db.students()).length) {
       await send(env, chatId, "Студентов пока нет: /addstudent Имя");
@@ -332,13 +347,40 @@ async function saveVocabulary(env, db, message, state) {
     await send(env, message.chat.id, ADD_FORMAT);
     return;
   }
-  const studentIds =
+  const students =
     state.addingFor === "all"
-      ? (await db.students()).map((row) => row.id)
-      : [state.addingFor];
-  await db.addChunks(studentIds, rows, clock(env).date);
+      ? await db.students()
+      : [await db.student(state.addingFor)];
+  const today = clock(env).date;
+  const showName = students.length > 1;
+  const lines = [];
+  let added = 0;
+  let skipped = 0;
+  for (const student of students) {
+    const { fresh, duplicates, similar } = compareChunks(
+      await db.chunks(student.id),
+      rows,
+    );
+    if (fresh.length) await db.addChunks([student.id], fresh, today);
+    added += fresh.length;
+    skipped += duplicates.length;
+    const owner = showName ? `${student.name}: ` : "";
+    for (const text of duplicates) {
+      lines.push(`${owner}уже есть «${text}»`);
+    }
+    for (const { text, match } of similar) {
+      lines.push(`${owner}«${text}» похоже на ${similarLabel(match)}`);
+    }
+  }
   await db.clearState(message.from.id);
-  await send(env, message.chat.id, `Добавлено чанков: ${rows.length}.`);
+  const header = [`Добавлено чанков: ${added}.`];
+  if (skipped) header.push(`Пропущено повторов: ${skipped}.`);
+  const details = lines.length ? `\n\n${lines.join("\n")}` : "";
+  await send(env, message.chat.id, `${header.join("\n")}${details}`.slice(0, 4000));
+}
+
+function similarLabel(chunk) {
+  return chunk.id ? `№${chunk.id} «${chunk.text}»` : `«${chunk.text}»`;
 }
 
 async function saveNote(env, db, message, state) {
@@ -393,12 +435,24 @@ async function saveStudentChunks(env, db, message, student, text) {
     await send(env, chatId, `За один раз можно добавить до ${MAX_STUDENT_CHUNKS} чанков.`);
     return;
   }
-  await db.addChunks([student.id], rows, clock(env).date);
+  const { fresh, duplicates, similar } = compareChunks(await db.chunks(student.id), rows);
   await db.clearState(message.from.id);
-  await send(env, chatId, `Добавлено чанков: ${rows.length}. Они уже в карточках! ✅`);
+  if (fresh.length) await db.addChunks([student.id], fresh, clock(env).date);
+  const reply = [];
+  if (fresh.length) {
+    reply.push(`Добавлено чанков: ${fresh.length}. Они уже в карточках! ✅`);
+  }
+  if (duplicates.length) {
+    reply.push(`Уже есть, не добавлено: ${duplicates.join(", ")}.`);
+  }
+  for (const { text, match } of similar) {
+    reply.push(`«${text}» похоже на «${match.text}».`);
+  }
+  await send(env, chatId, reply.join("\n").slice(0, 4000));
+  if (!fresh.length) return;
   if (env.TEACHER_ID) {
     try {
-      const list = rows.map((row) => row.filter(Boolean).join(" | ")).join("\n");
+      const list = fresh.map((row) => row.filter(Boolean).join(" | ")).join("\n");
       await send(
         env,
         env.TEACHER_ID,
@@ -505,6 +559,23 @@ async function onButton(env, db, query) {
   const userId = query.from.id;
   const [action, value] = query.data.split(":");
   const id = Number(value);
+
+  if (action === "dupesfor") {
+    if (!isTeacher(env, userId)) return;
+    // Сравнение всех пар затратно, а бесплатный тариф ограничивает время CPU.
+    const pairs = findDuplicatePairs((await db.chunks(id)).slice(0, MAX_DUPES_CHECK));
+    const lines = pairs.map(
+      ([first, second]) => `№${first.id} «${first.text}» ≈ №${second.id} «${second.text}»`,
+    );
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: lines.length
+        ? `${lines.join("\n")}\n\nЛишнее можно удалить: /delete номер`.slice(0, 4000)
+        : "Повторов не найдено.",
+    });
+    return;
+  }
 
   if (action === "resetfor" || action === "resetyes") {
     if (!isTeacher(env, userId)) return;
