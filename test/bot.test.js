@@ -509,30 +509,33 @@ test("после «Показать» есть ссылка на произно�
   assert.match(phrase.url, /^https:\/\/youglish\.com\/pronounce\/.+\/english$/);
 });
 
-// Один чанк → одна карточка с нужной ссылкой на словарь.
-async function dictionaryLinkFor(chunkText) {
+// Один чанк → одна карточка; возвращаем ссылки словаря на её кнопках.
+async function dictionaryLinksFor(chunkText) {
   const { env, sent } = await environment();
   const { db, sonya } = await studentWithFrame(env);
   await db.deleteChunks((await db.chunks(sonya.id)).map((row) => row.id));
   await db.addChunks([sonya.id], [[chunkText, "", "", ""]], DAY);
   await say(env, STUDENT, "🃏 Карточки");
   await press(env, STUDENT, sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data);
-  return sent.filter((item) => item.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard[1][0].url;
+  const row = sent.filter((item) => item.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard[1];
+  return row.filter((button) => button.url?.includes("dictionary.cambridge.org")).map((button) => button.url);
 }
 
+const CAMBRIDGE = "https://dictionary.cambridge.org/dictionary/english/";
+
 test("фразовый глагол ищется как глагол с частицей", async () => {
-  const url = await dictionaryLinkFor("weed out people");
-  assert.equal(url, "https://dictionary.cambridge.org/dictionary/english/weed-out");
+  assert.deepEqual(await dictionaryLinksFor("weed out people"), [`${CAMBRIDGE}weed-out`]);
 });
 
-test("идиома ищется целиком", async () => {
-  const url = await dictionaryLinkFor("let bygones be bygones");
-  assert.equal(url, "https://dictionary.cambridge.org/dictionary/english/let-bygones-be-bygones");
+test("длинная фраза даёт ключевое слово и всю фразу, на случай идиомы", async () => {
+  assert.deepEqual(await dictionaryLinksFor("let bygones be bygones"), [
+    `${CAMBRIDGE}bygones`,
+    `${CAMBRIDGE}let-bygones-be-bygones`,
+  ]);
 });
 
 test("коллокация ищется по одному слову", async () => {
-  const url = await dictionaryLinkFor("wry smile");
-  assert.equal(url, "https://dictionary.cambridge.org/dictionary/english/wry");
+  assert.deepEqual(await dictionaryLinksFor("wry smile"), [`${CAMBRIDGE}wry`]);
 });
 
 test("для фраз с инфинитивом be ссылки YouGlish нет", async () => {
@@ -554,8 +557,8 @@ test("для фразы со слотом (one's) ссылки YouGlish нет",
   await say(env, STUDENT, "🃏 Карточки");
   await press(env, STUDENT, sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data);
   const row = sent.filter((item) => item.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard[1];
-  assert.equal(row.length, 1);
-  assert.match(row[0].text, /^🔊 /);
+  assert.ok(!row.some((button) => button.text === "🎬 Фраза"));
+  assert.ok(row.every((button) => button.text.startsWith("🔊 ")));
 });
 
 test("преподаватель переименовывает и удаляет студента", async () => {

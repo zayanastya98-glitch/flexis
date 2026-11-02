@@ -416,31 +416,34 @@ const PARTICLES = new Set([
   "along", "about", "apart", "by", "forward", "ahead", "into", "together", "round",
 ]);
 
-// Что искать в словаре:
+// Что искать в словаре. Автоматически не отличить идиому от обычной фразы,
+// поэтому для длинных фраз даём два варианта, и студентка выбирает сама.
 // фразовый глагол → «weed out» (глагол + частица);
-// идиома (4+ слов без частицы) → вся фраза целиком;
-// коллокация → ключевое слово: «wry smile» → wry, «play havoc with» → havoc.
-function headword(text) {
+// коллокация → ключевое слово: «wry smile» → wry, «play havoc with» → havoc;
+// 4+ слов → ключевое слово и вся фраза (вдруг это идиома).
+function dictionaryTerms(text) {
   const words = text
     .toLowerCase()
     .replace(/[^a-z\s'-]/g, "")
     .split(/\s+/)
     .filter(Boolean);
   if (words.length >= 2 && PARTICLES.has(words[1]) && !SIMPLE_WORDS.has(words[0])) {
-    return `${words[0]} ${words[1]}`;
+    return [`${words[0]} ${words[1]}`];
   }
-  if (words.length >= 4) return words.join(" ");
   const content = words.filter((word) => !SIMPLE_WORDS.has(word));
-  if (!content.length) return words.join(" ");
+  const longest = [...content].sort((a, b) => b.length - a.length)[0];
   // В двусловных парах первое слово обычно важнее: «wry smile» → wry.
-  if (words.length === 2) return content[0];
-  return content.sort((a, b) => b.length - a.length)[0];
+  const keyword = (words.length === 2 ? content[0] : longest) || words.join(" ");
+  if (words.length >= 4) return [keyword, words.join(" ")];
+  return [keyword];
 }
 
-// Ряд кнопок произношения: термин в словаре и, если есть, фраза в YouGlish.
+// Ряд кнопок произношения: термины в словаре и, если есть, фраза в YouGlish.
 function pronunciationRow(text) {
-  const term = headword(text);
-  const row = [{ text: `🔊 ${term}`, url: dictionaryUrl(term) }];
+  const row = dictionaryTerms(text).map((term) => ({
+    text: `🔊 ${term}`,
+    url: dictionaryUrl(term),
+  }));
   const video = youglishUrl(text);
   if (video) row.push({ text: "🎬 Фраза", url: video });
   return row;
