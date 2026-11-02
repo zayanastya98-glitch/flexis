@@ -134,6 +134,14 @@ export class Database {
     return row.name;
   }
 
+  // Освобождает ID: под ним снова можно войти с любого аккаунта.
+  unlinkStudent(telegramId) {
+    return this.run(
+      "UPDATE students SET telegram_id = NULL WHERE telegram_id = ?",
+      telegramId,
+    );
+  }
+
   toggleNotification(studentId, kind) {
     const column = {
       chunk: "notify_chunk",

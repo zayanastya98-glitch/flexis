@@ -300,6 +300,28 @@ test("студент добавляет свои чанки", async () => {
   assert.equal((await db.chunks(anna.id)).length, 2);
 });
 
+test("выход освобождает ID и позволяет войти другим студентом", async () => {
+  const { env, sent } = await environment();
+  await say(env, TEACHER, "/addstudent Тест");
+  await say(env, TEACHER, "/addstudent Соня");
+  const db = new Database(env.DB);
+  const [sonya, test] = await db.students();
+  assert.equal(sonya.name, "Соня");
+
+  await say(env, TEACHER, test.code);
+  await say(env, TEACHER, "/logout");
+  assert.equal((await db.student(test.id)).telegram_id, null);
+
+  await say(env, TEACHER, sonya.code);
+  assert.equal((await db.student(sonya.id)).telegram_id, TEACHER);
+  await say(env, TEACHER, "/logout");
+
+  // Настоящий студент теперь может войти под этим ID.
+  await say(env, STUDENT, sonya.code);
+  assert.equal((await db.student(sonya.id)).telegram_id, STUDENT);
+  assert.match(lastText(sent), /^Привеет/);
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>

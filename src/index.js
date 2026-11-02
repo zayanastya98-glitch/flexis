@@ -41,7 +41,8 @@ const TEACHER_HELP =
   "/add — добавить лексику\n" +
   "/list — посмотреть лексику студента\n" +
   "/delete номер — удалить чанк\n" +
-  "/answers — последние ответы студентов";
+  "/answers — последние ответы студентов\n" +
+  "/logout — выйти из аккаунта студента";
 
 let schemaReady = false;
 
@@ -168,6 +169,14 @@ async function onCommand(env, db, message, command, argument) {
   if (command === "cancel") {
     await db.clearState(userId);
     await send(env, chatId, "Отменено.");
+    return;
+  }
+  if (command === "logout") {
+    await db.clearState(userId);
+    await db.unlinkStudent(userId);
+    await send(env, chatId, "Ты вышел из аккаунта. Чтобы войти, введи ID.", {
+      remove_keyboard: true,
+    });
     return;
   }
   if (!teacher) return;
