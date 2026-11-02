@@ -6,12 +6,16 @@ const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
 const NOTIFICATIONS = "🔔 Уведомления";
 const ADD_CHUNK = "➕ Добавить чанк";
+const NOTES = "📝 Заметки";
+// Запас до лимита Telegram: к тексту добавляется заголовок с датой.
+const MAX_NOTE_LENGTH = 3900;
 // Сколько чанков студент может добавить одним сообщением.
 const MAX_STUDENT_CHUNKS = 20;
 const MENU = {
   keyboard: [
     [{ text: CARDS }, { text: FRAMES }],
-    [{ text: ADD_CHUNK }, { text: NOTIFICATIONS }],
+    [{ text: ADD_CHUNK }, { text: NOTES }],
+    [{ text: NOTIFICATIONS }],
   ],
   resize_keyboard: true,
 };
@@ -39,6 +43,7 @@ const TEACHER_HELP =
   "/addstudent Имя — создать студента и его ID\n" +
   "/students — список студентов и их ID\n" +
   "/add — добавить лексику\n" +
+  "/note — отправить заметку с урока\n" +
   "/list — посмотреть лексику студента\n" +
   "/delete номер — удалить чанк\n" +
   "/answers — последние ответы студентов\n" +
@@ -100,6 +105,15 @@ function send(env, chatId, text, replyMarkup, entities) {
 // Выделяет чанк жирным. Спецсимволы в тексте при этом не ломают сообщение.
 function boldChunk(chunk, offset = 0) {
   return [{ type: "bold", offset, length: chunk.text.length }];
+}
+
+function formatDate(isoDate) {
+  return isoDate.split("-").reverse().join(".");
+}
+
+function sendNote(env, chatId, note) {
+  const title = `📝 Заметка с урока, ${formatDate(note.lesson_date)}`;
+  return send(env, chatId, `${title}\n\n${note.text}`, null, boldChunk({ text: title }));
 }
 
 function isTeacher(env, userId) {
@@ -217,6 +231,17 @@ async function onCommand(env, db, message, command, argument) {
       command === "add" ? "Кому добавить лексику?" : "Чью лексику показать?",
       await studentPicker(db, command === "add" ? "addfor" : "listfor", command === "add"),
     );
+  } else if (command === "note") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Сначала создай студента: /addstudent Имя");
+      return;
+    }
+    await send(
+      env,
+      chatId,
+      "Кому отправить заметку?",
+      await studentPicker(db, "noteto", false),
+    );
   } else if (command === "delete") {
     if (!/^\d+$/.test(argument)) {
       await send(env, chatId, "Напиши так: /delete 12. Номера есть в /list");
@@ -271,6 +296,34 @@ async function saveVocabulary(env, db, message, state) {
   await db.addChunks(studentIds, rows, clock(env).date);
   await db.clearState(message.from.id);
   await send(env, message.chat.id, `Добавлено чанков: ${rows.length}.`);
+}
+
+async function saveNote(env, db, message, state) {
+  const chatId = message.chat.id;
+  const text = message.text.trim();
+  if (text.length > MAX_NOTE_LENGTH) {
+    await send(env, chatId, "Заметка слишком длинная. Сократи её и пришли снова.");
+    return;
+  }
+  const student = await db.student(state.noteFor);
+  await db.clearState(message.from.id);
+  if (!student) {
+    await send(env, chatId, "Студент не найден.");
+    return;
+  }
+  const lessonDate = clock(env).date;
+  await db.addNote(student.id, lessonDate, text);
+  if (!student.telegram_id) {
+    await send(env, chatId, `Заметка сохранена. ${student.name} увидит её после входа в бота.`);
+    return;
+  }
+  try {
+    await sendNote(env, student.telegram_id, { lesson_date: lessonDate, text });
+    await send(env, chatId, `Заметка отправлена: ${student.name}.`);
+  } catch (error) {
+    console.error("Не удалось отправить заметку", error.message);
+    await send(env, chatId, `Заметка сохранена, но не доставлена: ${student.name}.`);
+  }
 }
 
 async function saveAnswer(env, db, message, student, state, text) {
@@ -338,6 +391,10 @@ async function onText(env, db, message) {
     await saveVocabulary(env, db, message, state);
     return;
   }
+  if (isTeacher(env, userId) && state.noteFor !== undefined) {
+    await saveNote(env, db, message, state);
+    return;
+  }
 
   const student = await db.studentByTelegram(userId);
   if (!student) {
@@ -369,6 +426,19 @@ async function onText(env, db, message) {
       "Выбери, что присылать раз в день:",
       notificationsKeyboard(student),
     );
+  } else if (text === NOTES) {
+    await db.clearState(userId);
+    const notes = await db.notes(student.id);
+    if (!notes.length) {
+      await send(env, chatId, "Заметок пока нет.");
+      return;
+    }
+    await send(env, chatId, "Выбери заметку:", {
+      inline_keyboard: notes.map((note) => {
+        const preview = note.text.replace(/\s+/g, " ").slice(0, 24);
+        return [inline(`${formatDate(note.lesson_date)} · ${preview}`, `note:${note.id}`)];
+      }),
+    });
   } else if (text === ADD_CHUNK) {
     await db.setState(userId, { awaiting: "chunk" });
     await send(env, chatId, STUDENT_ADD_FORMAT);
@@ -392,6 +462,19 @@ async function onButton(env, db, query) {
   const userId = query.from.id;
   const [action, value] = query.data.split(":");
   const id = Number(value);
+
+  if (action === "noteto") {
+    if (!isTeacher(env, userId)) return;
+    const student = await db.student(id);
+    if (!student) return;
+    await db.setState(userId, { noteFor: student.id });
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Пришли заметку для: ${student.name}. /cancel — отмена.`,
+    });
+    return;
+  }
 
   if (action === "addfor" || action === "listfor") {
     if (!isTeacher(env, userId)) return;
@@ -449,6 +532,9 @@ async function onButton(env, db, query) {
   } else if (action === "settime") {
     await db.setState(userId, { awaiting: "time" });
     await send(env, chatId, "Во сколько писать? Например, 09:30");
+  } else if (action === "note") {
+    const note = await db.note(id, student.id);
+    if (note) await sendNote(env, chatId, note);
   } else if (action === "frame") {
     const chunk = await db.chunk(id, student.id);
     if (chunk && chunk.frame) {

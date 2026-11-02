@@ -38,6 +38,12 @@ const SCHEMA = [
     answer TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
+  `CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    lesson_date TEXT NOT NULL,
+    text TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS user_state (
     telegram_id INTEGER PRIMARY KEY,
     data TEXT NOT NULL
@@ -272,6 +278,34 @@ export class Database {
     return this.one(
       `SELECT * FROM chunks WHERE student_id = ? AND frame != ''
        ORDER BY RANDOM() LIMIT 1`,
+      studentId,
+    );
+  }
+
+  // ---------- Заметки с уроков ----------
+  addNote(studentId, lessonDate, text) {
+    return this.run(
+      "INSERT INTO notes (student_id, lesson_date, text) VALUES (?, ?, ?)",
+      studentId,
+      lessonDate,
+      text,
+    );
+  }
+
+  // Telegram ограничивает число кнопок в сообщении, поэтому берём 90 последних.
+  notes(studentId, limit = 90) {
+    return this.many(
+      "SELECT * FROM notes WHERE student_id = ? ORDER BY id DESC LIMIT ?",
+      studentId,
+      limit,
+    );
+  }
+
+  // Студент может открыть только свою заметку.
+  note(noteId, studentId) {
+    return this.one(
+      "SELECT * FROM notes WHERE id = ? AND student_id = ?",
+      noteId,
       studentId,
     );
   }

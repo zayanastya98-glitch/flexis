@@ -326,6 +326,54 @@ test("выход освобождает ID и позволяет войти др
   assert.match(lastText(sent), /^Привеет/);
 });
 
+test("заметка с урока приходит студенту и хранится", async () => {
+  const { env, sent } = await environment();
+  await say(env, TEACHER, "/addstudent Соня");
+  await say(env, TEACHER, "/addstudent Анна");
+  const db = new Database(env.DB);
+  const [anna, sonya] = await db.students();
+  await say(env, STUDENT, sonya.code);
+
+  await say(env, TEACHER, "/note");
+  await press(env, TEACHER, `noteto:${sonya.id}`);
+  await say(env, TEACHER, "Сегодня повторили it takes\nДомашка: 3 фразы");
+  const delivered = sent.at(-2);
+  assert.equal(delivered.body.chat_id, STUDENT);
+  assert.match(delivered.body.text, /^📝 Заметка с урока, \d{2}\.\d{2}\.\d{4}\n\nСегодня/);
+  assert.match(delivered.body.text, /Домашка: 3 фразы/);
+  assert.equal(lastText(sent), "Заметка отправлена: Соня.");
+
+  await say(env, STUDENT, "📝 Заметки");
+  const button = sent.at(-1).body.reply_markup.inline_keyboard[0][0];
+  await press(env, STUDENT, button.callback_data);
+  assert.match(lastText(sent), /Сегодня повторили/);
+
+  // Другой студент не открывает чужую заметку.
+  await say(env, 11, anna.code);
+  const count = sent.length;
+  await press(env, 11, button.callback_data);
+  assert.equal(sent.length, count + 1);
+  assert.equal(sent.at(-1).method, "answerCallbackQuery");
+
+  // Посторонний не может отправить заметку.
+  await press(env, 99, `noteto:${sonya.id}`);
+  assert.deepEqual(await db.getState(99), {});
+
+  // Заметка ждёт студента, который ещё не вошёл.
+  await say(env, 11, "/logout");
+  await say(env, TEACHER, "/note");
+  await press(env, TEACHER, `noteto:${anna.id}`);
+  await say(env, TEACHER, "Для Анны");
+  assert.match(lastText(sent), /увидит её после входа/);
+  assert.equal((await db.notes(anna.id)).length, 1);
+
+  await say(env, TEACHER, "/note");
+  await press(env, TEACHER, `noteto:${anna.id}`);
+  await say(env, TEACHER, "x".repeat(4000));
+  assert.match(lastText(sent), /слишком длинная/);
+  assert.equal((await db.notes(anna.id)).length, 1);
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>
