@@ -223,9 +223,14 @@ export class Database {
     );
   }
 
-  async deleteChunk(chunkId) {
-    const result = await this.run("DELETE FROM chunks WHERE id = ?", chunkId);
-    return result.meta.changes > 0;
+  // Возвращает номера, которых нет в базе.
+  async deleteChunks(chunkIds) {
+    const missing = [];
+    for (const chunkId of chunkIds) {
+      const result = await this.run("DELETE FROM chunks WHERE id = ?", chunkId);
+      if (result.meta.changes === 0) missing.push(chunkId);
+    }
+    return missing;
   }
 
   nextCard(studentId, today) {

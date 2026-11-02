@@ -46,7 +46,7 @@ const TEACHER_HELP =
   "/note — отправить заметку с урока\n" +
   "/reset — обнулить прогресс студента\n" +
   "/list — посмотреть лексику студента\n" +
-  "/delete номер — удалить чанк\n" +
+  "/delete 12 15 20 — удалить чанки по номерам\n" +
   "/answers — последние ответы студентов\n" +
   "/logout — выйти из аккаунта студента";
 
@@ -57,7 +57,7 @@ const TEACHER_COMMANDS = [
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
   { command: "answers", description: "Ответы студентов" },
-  { command: "delete", description: "Удалить чанк: /delete номер" },
+  { command: "delete", description: "Удалить чанки: /delete 12 15" },
   { command: "reset", description: "Обнулить прогресс студента" },
   { command: "logout", description: "Выйти из аккаунта студента" },
   { command: "cancel", description: "Отменить действие" },
@@ -283,12 +283,15 @@ async function onCommand(env, db, message, command, argument) {
       await studentPicker(db, "noteto", false),
     );
   } else if (command === "delete") {
-    if (!/^\d+$/.test(argument)) {
-      await send(env, chatId, "Напиши так: /delete 12. Номера есть в /list");
+    if (!/^\d+(?:[\s,]+\d+)*$/.test(argument)) {
+      await send(env, chatId, "Напиши так: /delete 12 15 20. Номера есть в /list");
       return;
     }
-    const deleted = await db.deleteChunk(Number(argument));
-    await send(env, chatId, deleted ? "Удалено." : "Такого номера нет.");
+    const ids = [...new Set(argument.split(/[\s,]+/).map(Number))];
+    const missing = await db.deleteChunks(ids);
+    const lines = [`Удалено чанков: ${ids.length - missing.length}.`];
+    if (missing.length) lines.push(`Не найдены: ${missing.join(", ")}.`);
+    await send(env, chatId, lines.join("\n"));
   } else if (command === "answers") {
     const rows = await db.recentAnswers();
     if (!rows.length) {

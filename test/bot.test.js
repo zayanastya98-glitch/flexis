@@ -420,6 +420,24 @@ test("меню команд настраивается только для пр�
   assert.match(lastText(sent), /^Команды Насти/);
 });
 
+test("можно удалить несколько чанков сразу", async () => {
+  const { env, sent } = await environment();
+  await say(env, TEACHER, "/addstudent Соня");
+  const db = new Database(env.DB);
+  const [sonya] = await db.students();
+  await db.addChunks([sonya.id], [["a"], ["b"], ["c"]].map(([t]) => [t, "", "", ""]), DAY);
+  const [c, b, a] = await db.chunks(sonya.id);
+
+  await say(env, TEACHER, `/delete ${a.id}, ${b.id} ${b.id} 999`);
+  assert.equal(lastText(sent), "Удалено чанков: 2.\nНе найдены: 999.");
+  assert.deepEqual((await db.chunks(sonya.id)).map((row) => row.id), [c.id]);
+
+  await say(env, TEACHER, "/delete abc");
+  assert.match(lastText(sent), /Напиши так/);
+  await say(env, 99, `/delete ${c.id}`);
+  assert.equal((await db.chunks(sonya.id)).length, 1);
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>
