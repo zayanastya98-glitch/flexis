@@ -594,19 +594,20 @@ async function onCommand(env, db, message, command, argument) {
 
 // ---------- Студент ----------
 // Сессия карточек: по 10 штук, потом бот спрашивает, практиковать ещё или закончить.
+const SESSION_END_TEXT = `Сессия из ${CARD_SESSION} карточек пройдена 🎉\n\nПрактиковать ещё или закончить?`;
+
+function sessionEndKeyboard() {
+  return {
+    inline_keyboard: [
+      [inline("📝 Задание по этим чанкам", "task")],
+      [inline("🔁 Ещё 10", "cardsmore"), inline("🏁 Закончить", "cardsend")],
+    ],
+  };
+}
+
 async function sendCard(env, db, chatId, student, number = 1) {
   if (number > CARD_SESSION) {
-    await send(
-      env,
-      chatId,
-      `Сессия из ${CARD_SESSION} карточек пройдена 🎉\n\nПрактиковать ещё или закончить?`,
-      {
-        inline_keyboard: [
-          [inline("📝 Задание по этим чанкам", "task")],
-          [inline("🔁 Ещё 10", "cardsmore"), inline("🏁 Закончить", "cardsend")],
-        ],
-      },
-    );
+    await send(env, chatId, SESSION_END_TEXT, sessionEndKeyboard());
     return;
   }
   const chunk = await db.nextCard(student.id, clock(env).date);
@@ -1047,7 +1048,23 @@ async function onButton(env, db, query) {
       env,
       chatId,
       `📝 Задание\n\n${intro}\n\nЧанки:\n${chunks.map((chunk) => `• ${chunk}`).join("\n")}`,
+      { inline_keyboard: [[inline("← Назад", "taskback")]] },
     );
+    return;
+  }
+
+  // Назад: задание отменяется, снова выбор «Ещё 10 / Закончить».
+  if (action === "taskback") {
+    const student = await db.studentByTelegram(userId);
+    if (!student) return;
+    const { awaiting, task, ...rest } = await db.getState(userId);
+    await db.setState(userId, rest);
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: SESSION_END_TEXT,
+      reply_markup: sessionEndKeyboard(),
+    });
     return;
   }
 

@@ -472,6 +472,30 @@ test("после сессии карточек задание с ответом 
   );
 });
 
+test("в задании кнопка «Назад» возвращает к выбору после сессии", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    Array.from({ length: 10 }, (_, i) => [`phrase number ${i}`, "", "", ""]),
+    DAY,
+  );
+  await say(env, STUDENT, "🃏 Карточки");
+  const last = () => sent.filter((item) => item.method === "sendMessage" || item.method === "editMessageText").at(-1).body;
+  for (let n = 1; n <= 10; n++) {
+    await press(env, STUDENT, last().reply_markup.inline_keyboard[0][0].callback_data);
+    await press(env, STUDENT, last().reply_markup.inline_keyboard[0][1].callback_data);
+  }
+  await press(env, STUDENT, "task");
+  const back = last().reply_markup.inline_keyboard[0][0].callback_data;
+  assert.equal(back, "taskback");
+  await press(env, STUDENT, back);
+  assert.match(last().text, /Практиковать ещё или закончить/);
+  // После «Назад» текст не уходит как ответ на задание.
+  await say(env, STUDENT, "just some text");
+  assert.ok(!sent.some((item) => item.method === "sendMessage" && String(item.body.chat_id) === String(TEACHER) && /just some text/.test(item.body.text)));
+});
+
 test("преподаватель переименовывает и удаляет студента", async () => {
   const { env } = await environment();
   const { db, sonya } = await studentWithFrame(env);
