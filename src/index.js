@@ -421,14 +421,27 @@ function keyWord(text) {
   return words.sort((a, b) => b.length - a.length)[0] || text.toLowerCase();
 }
 
+// Ряд кнопок произношения: слово в словаре и, если есть, фраза в YouGlish.
+function pronunciationRow(text) {
+  const word = keyWord(text);
+  const row = [{ text: `🔊 ${word}`, url: dictionaryUrl(word) }];
+  const video = youglishUrl(text);
+  if (video) row.push({ text: "🎬 Фраза", url: video });
+  return row;
+}
+
 // Словарь Cambridge по одному слову: определение и произношение.
 function dictionaryUrl(word) {
   const slug = word.replace(/'/g, "");
   return `https://dictionary.cambridge.org/dictionary/english/${encodeURIComponent(slug)}`;
 }
 
-// YouGlish по всей фразе: произношение и примеры из видео.
+// Фразы со слотами (one's, someone, sb) в YouGlish почти не находятся, для них ссылки нет.
+const PLACEHOLDER = /\b(one'?s|oneself|someone|somebody|sb|sth|something)\b/i;
+
+// YouGlish по всей фразе: произношение и примеры из видео. Или null, если фразы там обычно нет.
 function youglishUrl(phrase) {
+  if (PLACEHOLDER.test(phrase)) return null;
   const clean = phrase.toLowerCase().replace(/[^a-z\s'-]/g, "").trim();
   return `https://youglish.com/pronounce/${encodeURIComponent(clean)}/english`;
 }
@@ -1236,10 +1249,7 @@ async function onButton(env, db, query) {
               inline("🔁 Повторить", `again:${id}:${number}`),
               inline("✅ Знаю", `know:${id}:${number}`),
             ],
-            [
-              { text: `🔊 ${keyWord(chunk.text)}`, url: dictionaryUrl(keyWord(chunk.text)) },
-              { text: "🎬 Фраза", url: youglishUrl(chunk.text) },
-            ],
+            pronunciationRow(chunk.text),
           ],
         },
       });

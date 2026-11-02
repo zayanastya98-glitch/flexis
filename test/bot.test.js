@@ -509,6 +509,18 @@ test("после «Показать» есть ссылка на произно�
   assert.match(phrase.url, /^https:\/\/youglish\.com\/pronounce\/.+\/english$/);
 });
 
+test("для фразы со слотом (one's) ссылки YouGlish нет", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.deleteChunks((await db.chunks(sonya.id)).map((row) => row.id));
+  await db.addChunks([sonya.id], [["line one's own pocket", "", "", ""]], DAY);
+  await say(env, STUDENT, "🃏 Карточки");
+  await press(env, STUDENT, sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data);
+  const row = sent.filter((item) => item.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard[1];
+  assert.equal(row.length, 1);
+  assert.match(row[0].text, /^🔊 /);
+});
+
 test("преподаватель переименовывает и удаляет студента", async () => {
   const { env } = await environment();
   const { db, sonya } = await studentWithFrame(env);
