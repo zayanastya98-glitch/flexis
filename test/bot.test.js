@@ -222,7 +222,7 @@ test("полный сценарий: преподаватель и студен�
   assert.ok(sent.at(-1).body.reply_markup.keyboard);
 
   await say(env, STUDENT, "🃏 Карточки");
-  assert.equal(lastText(sent), "used to");
+  assert.equal(lastText(sent), "Карточка 1 из 10\n\nused to");
   assert.equal(sent.at(-1).body.entities[0].length, "used to".length);
   const show = sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data;
   await press(env, STUDENT, show);
@@ -416,6 +416,28 @@ test("сброс прогресса оставляет лексику и зам�
   assert.equal((await db.chunks(anna.id))[0].box, 2);
 });
 
+test("карточки идут сессиями по 10 со счётчиком", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    Array.from({ length: 12 }, (_, i) => [`phrase number ${i}`, "", "", ""]),
+    DAY,
+  );
+  await say(env, STUDENT, "🃏 Карточки");
+  const messages = () => sent.filter((item) => item.method === "sendMessage" || item.method === "editMessageText");
+  const last = () => messages().at(-1).body;
+  for (let n = 1; n <= 10; n++) {
+    assert.match(last().text, new RegExp(`Карточка ${n} из 10`));
+    await press(env, STUDENT, last().reply_markup.inline_keyboard[0][0].callback_data);
+    await press(env, STUDENT, last().reply_markup.inline_keyboard[0][1].callback_data);
+  }
+  // После десяти карточек бот спрашивает, продолжать или закончить.
+  assert.match(lastText(sent), /Практиковать ещё или закончить/);
+  await press(env, STUDENT, "cardsmore");
+  assert.match(lastText(sent), /Карточка 1 из 10/);
+});
+
 test("преподаватель переименовывает и удаляет студента", async () => {
   const { env } = await environment();
   const { db, sonya } = await studentWithFrame(env);
@@ -576,23 +598,23 @@ test("карточка показывается на русском или на 
   try {
     Math.random = () => 0.1;
     await say(env, STUDENT, "🃏 Карточки");
-    assert.equal(lastText(sent), "Как сказать по-английски?\n\nраньше");
+    assert.equal(lastText(sent), "Карточка 1 из 10\n\nКак сказать по-английски?\n\nраньше");
     const [bold] = sent.at(-1).body.entities;
     assert.equal(lastText(sent).slice(bold.offset, bold.offset + bold.length), "раньше");
     const show = sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data;
     await press(env, STUDENT, show);
-    assert.match(lastText(sent), /^used to\nПеревод: раньше/);
+    assert.match(lastText(sent), /used to\nПеревод: раньше/);
 
     Math.random = () => 0.9;
     await say(env, STUDENT, "🃏 Карточки");
-    assert.equal(lastText(sent), "used to");
+    assert.equal(lastText(sent), "Карточка 1 из 10\n\nused to");
 
     // Без перевода показывать по-русски нечего.
     await db.deleteChunks((await db.chunks(sonya.id)).map((row) => row.id));
     await db.addChunks([sonya.id], [["make sense", "", "", ""]], DAY);
     Math.random = () => 0.1;
     await say(env, STUDENT, "🃏 Карточки");
-    assert.equal(lastText(sent), "make sense");
+    assert.equal(lastText(sent), "Карточка 1 из 10\n\nmake sense");
   } finally {
     Math.random = originalRandom;
   }
@@ -828,7 +850,7 @@ test("квиз на пропуск в примере и на предлог", as
   assert.ok(poll.body.question.includes("«"));
   // Вопрос на предлог: в варианте только предлоги.
   const prepositions = ["to", "on", "in", "at", "for", "of", "with", "about", "from"];
-  if (poll.body.question.startsWith("Какой предлог")) {
+  if (poll.body.question.includes("Какой предлог")) {
     assert.ok(prepositions.includes(poll.body.options[poll.body.correct_option_id].text));
   } else {
     assert.match(poll.body.question, /___/);

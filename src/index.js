@@ -16,6 +16,8 @@ const MAX_NOTE_LENGTH = 3900;
 const MAX_DUPES_CHECK = 150;
 // Сколько вопросов идёт подряд в одном квизе.
 const QUIZ_LENGTH = 10;
+// Сколько карточек идёт подряд до вопроса «practice ещё или закончить».
+const CARD_SESSION = 10;
 // Защита от случайных расходов на API.
 const MAX_AI_CHECKS_PER_DAY = 30;
 // Сколько чанков студент может добавить одним сообщением.
@@ -255,7 +257,7 @@ async function sendQuiz(env, db, chatId, student, count = 0, progress = { score:
 
   const result = await telegram(env, "sendPoll", {
     chat_id: chatId,
-    question: question.slice(0, 300),
+    question: `${count + 1}/${QUIZ_LENGTH} · ${question}`.slice(0, 300),
     options: options.map((text) => ({ text: text.slice(0, 100) })),
     type: "quiz",
     correct_option_id: options.indexOf(answer),
@@ -590,16 +592,29 @@ async function onCommand(env, db, message, command, argument) {
 }
 
 // ---------- Студент ----------
-async function sendCard(env, db, chatId, student) {
+// Сессия карточек: по 10 штук, потом бот спрашивает, практиковать ещё или закончить.
+async function sendCard(env, db, chatId, student, number = 1) {
+  if (number > CARD_SESSION) {
+    await send(
+      env,
+      chatId,
+      `Сессия из ${CARD_SESSION} карточек пройдена 🎉\n\nПрактиковать ещё или закончить?`,
+      {
+        inline_keyboard: [[inline("🔁 Ещё 10", "cardsmore"), inline("🏁 Закончить", "cardsend")]],
+      },
+    );
+    return;
+  }
   const chunk = await db.nextCard(student.id, clock(env).date);
   if (!chunk) {
     await send(env, chatId, "На сегодня карточек нет. Отличная работа! 🎉");
     return;
   }
-  const keyboard = { inline_keyboard: [[inline("Показать", `show:${chunk.id}`)]] };
+  const counter = `Карточка ${number} из ${CARD_SESSION}\n\n`;
+  const keyboard = { inline_keyboard: [[inline("Показать", `show:${chunk.id}:${number}`)]] };
   // Без перевода карточка всегда показывается на английском.
   if (chunk.translation && Math.random() < 0.5) {
-    const title = "Как сказать по-английски?\n\n";
+    const title = `${counter}Как сказать по-английски?\n\n`;
     await send(
       env,
       chatId,
@@ -609,7 +624,7 @@ async function sendCard(env, db, chatId, student) {
     );
     return;
   }
-  await send(env, chatId, chunk.text, keyboard, boldChunk(chunk));
+  await send(env, chatId, `${counter}${chunk.text}`, keyboard, boldChunk(chunk, counter.length));
 }
 
 async function askFrame(env, db, chatId, userId, chunk) {
@@ -911,7 +926,7 @@ async function onButton(env, db, query) {
   const chatId = message.chat.id;
   const messageId = message.message_id;
   const userId = query.from.id;
-  const [action, value] = query.data.split(":");
+  const [action, value, extra] = query.data.split(":");
   const id = Number(value);
 
   if (action === "dupesfor") {
@@ -955,6 +970,18 @@ async function onButton(env, db, query) {
       message_id: messageId,
       text: `Прогресс обнулён: ${student.name}.`,
     });
+    return;
+  }
+
+  if (action === "cardsmore" || action === "cardsend") {
+    const student = await db.studentByTelegram(userId);
+    if (!student) return;
+    await telegram(env, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId });
+    if (action === "cardsend") {
+      await send(env, chatId, "Отличная работа! Закончили на сегодня 🎉");
+      return;
+    }
+    await sendCard(env, db, chatId, student, 1);
     return;
   }
 
@@ -1072,14 +1099,19 @@ async function onButton(env, db, query) {
   if (action === "show") {
     const chunk = await db.chunk(id, student.id);
     if (chunk) {
+      const number = Number(extra) || 0;
+      const counter = number ? `Карточка ${number} из ${CARD_SESSION}\n\n` : "";
       await telegram(env, "editMessageText", {
         chat_id: chatId,
         message_id: messageId,
-        text: cardDetails(chunk),
-        entities: boldChunk(chunk),
+        text: `${counter}${cardDetails(chunk)}`,
+        entities: boldChunk(chunk, counter.length),
         reply_markup: {
           inline_keyboard: [
-            [inline("🔁 Повторить", `again:${id}`), inline("✅ Знаю", `know:${id}`)],
+            [
+              inline("🔁 Повторить", `again:${id}:${number}`),
+              inline("✅ Знаю", `know:${id}:${number}`),
+            ],
           ],
         },
       });
@@ -1091,7 +1123,7 @@ async function onButton(env, db, query) {
       chat_id: chatId,
       message_id: messageId,
     });
-    await sendCard(env, db, chatId, student);
+    await sendCard(env, db, chatId, student, (Number(extra) || 0) + 1);
   } else if (action === "notify") {
     await db.toggleNotification(student.id, value);
     await telegram(env, "editMessageText", {
