@@ -263,6 +263,8 @@ test("настройка времени и рассылка по расписа�
   await runCron(env);
   const texts = sent.map((item) => item.body.text);
   const daily = sent.find((item) => item.body.text?.startsWith("Чанк дня"));
+  // Студентка уже заходила сегодня, поэтому серия есть.
+  assert.match(daily.body.text, /Серия: 1 дн\. подряд\. Продолжим\?$/);
   const [bold] = daily.body.entities;
   assert.equal(bold.type, "bold");
   assert.equal(daily.body.text.slice(bold.offset, bold.offset + bold.length), "used to");
@@ -761,6 +763,17 @@ test("серия дней растёт по дням и сбрасывается
   const row = await db.progressRow(sonya.id);
   assert.equal(row.streak, 1);
   assert.equal(row.best_streak, 2);
+});
+
+test("серия для напоминания считается по дням и прерывается", async () => {
+  const { env } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  assert.equal(await db.currentStreak(sonya.id, "2026-11-03"), 0);
+  await db.touch(sonya.id, "t", "2026-11-01");
+  await db.touch(sonya.id, "t", "2026-11-02");
+  assert.equal(await db.currentStreak(sonya.id, "2026-11-03"), 2);
+  assert.equal(await db.currentStreak(sonya.id, "2026-11-02"), 2);
+  assert.equal(await db.currentStreak(sonya.id, "2026-11-05"), 0);
 });
 
 test("ошибка Telegram не ломает ответ сервера", async () => {

@@ -961,10 +961,15 @@ async function sendNotifications(env, db) {
         const chunk = await db.nextDailyChunk(student.id, date);
         if (chunk) {
           const title = "Чанк дня ✨\n\n";
+          const streak = await db.currentStreak(student.id, date);
+          // Чанк остаётся главным, а строка про серию ненавязчивая и обычным шрифтом.
+          const friendly = streak
+            ? `🔥 Серия: ${streak} дн. подряд. Продолжим?`
+            : "🏁 Начни свой марафон: сегодня первый день!";
           await send(
             env,
             chatId,
-            `${title}${cardDetails(chunk)}`,
+            `${title}${cardDetails(chunk)}\n\n${friendly}`,
             null,
             boldChunk(chunk, title.length),
           );

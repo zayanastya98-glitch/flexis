@@ -6,7 +6,7 @@ const INTERVALS = { 1: 1, 2: 3, 3: 7, 4: 14, 5: 30 };
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 // Предыдущий день в формате YYYY-MM-DD.
-function previousDay(day) {
+export function previousDay(day) {
   const date = new Date(`${day}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() - 1);
   return date.toISOString().slice(0, 10);
@@ -365,6 +365,16 @@ export class Database {
       best,
       day,
     );
+  }
+
+  // Серия, которая ещё действует на указанный день (0, если прервалась).
+  async currentStreak(studentId, day) {
+    const row = await this.one(
+      "SELECT streak, last_day FROM student_progress WHERE student_id = ?",
+      studentId,
+    );
+    if (!row) return 0;
+    return row.last_day === day || row.last_day === previousDay(day) ? row.streak : 0;
   }
 
   incrementProgress(studentId, column) {
