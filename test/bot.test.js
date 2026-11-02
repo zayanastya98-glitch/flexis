@@ -408,6 +408,18 @@ test("сброс прогресса оставляет лексику и зам�
   assert.equal((await db.chunks(anna.id))[0].box, 2);
 });
 
+test("меню команд настраивается только для преподавателя", async () => {
+  const { env, sent } = await environment();
+  await say(env, STUDENT, "/start");
+  assert.ok(!sent.some((item) => item.method === "setMyCommands"));
+
+  await say(env, TEACHER, "/start");
+  const menu = sent.find((item) => item.method === "setMyCommands");
+  assert.deepEqual(menu.body.scope, { type: "chat", chat_id: TEACHER });
+  assert.ok(menu.body.commands.some((item) => item.command === "note"));
+  assert.match(lastText(sent), /^Команды Насти/);
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>

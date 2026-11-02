@@ -50,6 +50,20 @@ const TEACHER_HELP =
   "/answers — последние ответы студентов\n" +
   "/logout — выйти из аккаунта студента";
 
+const TEACHER_COMMANDS = [
+  { command: "add", description: "Добавить лексику" },
+  { command: "note", description: "Отправить заметку с урока" },
+  { command: "addstudent", description: "Создать студента: /addstudent Имя" },
+  { command: "students", description: "Студенты и их ID" },
+  { command: "list", description: "Лексика студента" },
+  { command: "answers", description: "Ответы студентов" },
+  { command: "delete", description: "Удалить чанк: /delete номер" },
+  { command: "reset", description: "Обнулить прогресс студента" },
+  { command: "logout", description: "Выйти из аккаунта студента" },
+  { command: "cancel", description: "Отменить действие" },
+  { command: "help", description: "Все команды" },
+];
+
 let schemaReady = false;
 
 async function openDb(env) {
@@ -117,6 +131,18 @@ function sendNote(env, chatId, note) {
   return send(env, chatId, `${title}\n\n${note.text}`, null, boldChunk({ text: title }));
 }
 
+// Показывает кнопку «Меню» с командами только в чате Насти.
+async function showTeacherMenu(env, chatId) {
+  try {
+    await telegram(env, "setMyCommands", {
+      commands: TEACHER_COMMANDS,
+      scope: { type: "chat", chat_id: chatId },
+    });
+  } catch (error) {
+    console.error("Не удалось настроить меню команд", error.message);
+  }
+}
+
 function isTeacher(env, userId) {
   return Boolean(env.TEACHER_ID) && String(userId) === String(env.TEACHER_ID).trim();
 }
@@ -173,12 +199,14 @@ async function onCommand(env, db, message, command, argument) {
 
   if (command === "start") {
     await db.clearState(userId);
+    if (teacher) await showTeacherMenu(env, chatId);
     const student = await db.studentByTelegram(userId);
     if (student) {
       await send(env, chatId, `Привет, ${student.name}! Что потренируем?`, MENU);
-    } else if (teacher) {
+    }
+    if (teacher) {
       await send(env, chatId, TEACHER_HELP);
-    } else {
+    } else if (!student) {
       await send(env, chatId, "Привет! Введи свой ID от Насти.");
     }
     return;
