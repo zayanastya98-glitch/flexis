@@ -6,7 +6,7 @@ import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
 
-const TERMS_RUN_LIMIT = 200;
+const TERMS_RUN_LIMIT = 60;
 
 const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
@@ -619,23 +619,29 @@ async function onCommand(env, db, message, command, argument) {
       await send(env, chatId, "Без ключа ANTHROPIC_API_KEY термины не определяются.");
       return;
     }
-    const texts = await db.chunkTexts();
-    const known = await db.knownPhrases();
-    const pending = texts.filter((text) => !known.has(text.trim().toLowerCase()));
-    if (!pending.length) {
-      await send(env, chatId, "Все чанки уже классифицированы ✅");
-      return;
+    try {
+      const texts = await db.chunkTexts();
+      const known = await db.knownPhrases();
+      const pending = texts.filter((text) => !known.has(text.trim().toLowerCase()));
+      if (!pending.length) {
+        await send(env, chatId, "Все чанки уже классифицированы ✅");
+        return;
+      }
+      await send(env, chatId, `Определяю термины для ${Math.min(pending.length, TERMS_RUN_LIMIT)} фраз, это может занять минуту…`);
+      // Один запуск ограничен, чтобы уложиться в лимиты Cloudflare и не ждать слишком долго.
+      const done = await rememberTerms(env, db, pending.slice(0, TERMS_RUN_LIMIT));
+      const left = pending.length - done;
+      await send(
+        env,
+        chatId,
+        left
+          ? `Классифицировано: ${done}. Осталось: ${left}. Запусти /terms ещё раз.`
+          : `Классифицировано: ${done}. Готово ✅`,
+      );
+    } catch (error) {
+      console.error("/terms не сработал", error.message);
+      await send(env, chatId, `Не получилось определить термины: ${error.message}`);
     }
-    // Один запуск ограничен, чтобы не упереться в лимит запросов Cloudflare.
-    const done = await rememberTerms(env, db, pending.slice(0, TERMS_RUN_LIMIT));
-    const left = pending.length - done;
-    await send(
-      env,
-      chatId,
-      left
-        ? `Классифицировано: ${done}. Осталось: ${left}. Запусти /terms ещё раз.`
-        : `Классифицировано: ${done}. Готово ✅`,
-    );
   } else if (command === "stats") {
     await send(env, chatId, await statsText(env, db));
   } else if (command === "reply") {

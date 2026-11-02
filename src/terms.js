@@ -49,6 +49,8 @@ async function classify(env, items) {
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: `Items:\n${items.join("\n")}` }],
     }),
+    // Не даём одному зависшему запросу держать весь ответ бота.
+    signal: AbortSignal.timeout(60000),
   });
   if (!response.ok) {
     console.error("Термины: ошибка API", response.status);
