@@ -453,10 +453,9 @@ export class Database {
     return this.run("UPDATE chunks SET frame = ? WHERE text = ? AND frame = ''", frame, text);
   }
 
-  // Тексты чанков, у которых нет начала фразы.
-  async framelessTexts() {
-    const rows = await this.many("SELECT DISTINCT text FROM chunks WHERE frame = ''");
-    return rows.map((row) => row.text);
+  // Чанки без начала фразы: текст вместе с переводом и примером для контекста.
+  framelessTexts() {
+    return this.many("SELECT DISTINCT text, translation, example FROM chunks WHERE frame = ''");
   }
 
   // Тексты всех чанков всех студентов без повторов.

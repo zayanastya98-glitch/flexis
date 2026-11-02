@@ -1181,7 +1181,7 @@ test("начало фразы принимается с многоточием-�
       JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
     );
   };
-  await fillFrames(env, db, ["Wry Smile"]);
+  await fillFrames(env, db, [{ text: "Wry Smile", translation: "", example: "" }]);
   globalThis.fetch = originalFetch;
   assert.equal((await db.chunks(sonya.id))[0].frame, "I gave a wry smile when...");
 });

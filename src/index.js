@@ -623,13 +623,13 @@ async function onCommand(env, db, message, command, argument) {
       return;
     }
     try {
-      const texts = await db.framelessTexts();
-      if (!texts.length) {
+      const rows = await db.framelessTexts();
+      if (!rows.length) {
         await send(env, chatId, "У всех чанков есть начало фразы ✅");
         return;
       }
-      await send(env, chatId, `Пишу начала фраз для ${Math.min(texts.length, TERMS_RUN_LIMIT)} чанков, это может занять минуту…`);
-      await fillFrames(env, db, texts.slice(0, TERMS_RUN_LIMIT));
+      await send(env, chatId, `Пишу начала фраз для ${Math.min(rows.length, TERMS_RUN_LIMIT)} чанков, это может занять минуту…`);
+      await fillFrames(env, db, rows.slice(0, TERMS_RUN_LIMIT));
       const left = (await db.framelessTexts()).length;
       await send(
         env,
@@ -801,7 +801,7 @@ async function saveVocabulary(env, db, message, state) {
     if (fresh.length) {
       await db.addChunks([student.id], fresh, today);
       await rememberTerms(env, db, fresh.map((row) => row[0]));
-      await fillFrames(env, db, fresh.filter((row) => !row[3]).map((row) => row[0]));
+      await fillFrames(env, db, fresh.filter((row) => !row[3]).map(([text, translation, example]) => ({ text, translation, example })));
     }
     added += fresh.length;
     skipped += duplicates.length;
@@ -920,7 +920,7 @@ async function saveStudentChunks(env, db, message, student, text) {
   if (fresh.length) {
     await db.addChunks([student.id], fresh, clock(env).date);
     await rememberTerms(env, db, fresh.map((row) => row[0]));
-    await fillFrames(env, db, fresh.filter((row) => !row[3]).map((row) => row[0]));
+    await fillFrames(env, db, fresh.filter((row) => !row[3]).map(([text, translation, example]) => ({ text, translation, example })));
     await db.increment(student.id, "own_chunks", fresh.length);
   }
   const reply = [];
