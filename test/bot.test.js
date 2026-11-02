@@ -205,11 +205,13 @@ test("полный сценарий: преподаватель и студен�
   await say(env, TEACHER, "/add");
   const pick = sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data;
   await press(env, TEACHER, pick);
+  await press(env, TEACHER, "adddone");
   await say(env, TEACHER, "used to | раньше | I used to teach. | I used to...");
   assert.equal(lastText(sent), "Добавлено чанков: 1.");
 
   // Посторонний с этой кнопкой не начинает добавление.
   await press(env, 99, pick);
+  await press(env, 99, "adddone");
   await say(env, 99, "hack | x");
   assert.match(lastText(sent), /Такого ID нет/);
 
@@ -498,6 +500,39 @@ test("бот пропускает повторы и сообщает о похо
   assert.match(lastText(sent), /Уже есть, не добавлено: catch a bus/);
   assert.equal(sent.length, count + 1);
   assert.equal((await db.chunks(sonya.id)).length, 3);
+});
+
+test("лексику можно добавить нескольким студентам", async () => {
+  const { env, sent } = await environment();
+  for (const name of ["Аня", "Вера", "Глеб"]) {
+    await say(env, TEACHER, `/addstudent ${name}`);
+  }
+  const db = new Database(env.DB);
+  const [anya, vera, gleb] = await db.students();
+  await db.addChunks([vera.id], [["catch a bus", "", "", ""]], DAY);
+
+  await say(env, TEACHER, "/add");
+  await press(env, TEACHER, "adddone");
+  assert.match(lastText(sent), /хотя бы одного/);
+
+  await press(env, TEACHER, `addpick:${anya.id}`);
+  await press(env, TEACHER, `addpick:${gleb.id}`);
+  await press(env, TEACHER, `addpick:${vera.id}`);
+  await press(env, TEACHER, `addpick:${gleb.id}`);
+  const marks = sent.at(-1).body.reply_markup.inline_keyboard.flat().map((b) => b.text);
+  assert.ok(marks.includes("✅ Аня"));
+  assert.ok(marks.includes("⬜️ Глеб"));
+
+  // Посторонний не может менять выбор.
+  await press(env, 99, `addpick:${gleb.id}`);
+  assert.deepEqual((await db.getState(TEACHER)).picking, [anya.id, vera.id]);
+
+  await press(env, TEACHER, "adddone");
+  await say(env, TEACHER, "catch a bus\nmake sense");
+  assert.equal((await db.chunks(anya.id)).length, 2);
+  assert.equal((await db.chunks(vera.id)).length, 2);
+  assert.equal((await db.chunks(gleb.id)).length, 0);
+  assert.match(lastText(sent), /Вера: уже есть «catch a bus»/);
 });
 
 test("ошибка Telegram не ломает ответ сервера", async () => {

@@ -195,6 +195,16 @@ async function studentPicker(db, prefix, includeAll) {
   return { inline_keyboard: rows };
 }
 
+// Список с галочками: можно выбрать одного, нескольких или всех.
+async function addKeyboard(db, selected) {
+  const rows = (await db.students()).map((row) => [
+    inline(`${selected.includes(row.id) ? "✅" : "⬜️"} ${row.name}`, `addpick:${row.id}`),
+  ]);
+  rows.push([inline("Всем студентам", "addfor:all")]);
+  rows.push([inline("Готово", "adddone")]);
+  return { inline_keyboard: rows };
+}
+
 // ---------- Команды ----------
 async function onCommand(env, db, message, command, argument) {
   const chatId = message.chat.id;
@@ -258,11 +268,21 @@ async function onCommand(env, db, message, command, argument) {
       await send(env, chatId, "Сначала создай студента: /addstudent Имя");
       return;
     }
+    if (command === "add") {
+      await db.setState(userId, { picking: [] });
+      await send(
+        env,
+        chatId,
+        "Кому добавить лексику? Отметь студентов и нажми «Готово».",
+        await addKeyboard(db, []),
+      );
+      return;
+    }
     await send(
       env,
       chatId,
-      command === "add" ? "Кому добавить лексику?" : "Чью лексику показать?",
-      await studentPicker(db, command === "add" ? "addfor" : "listfor", command === "add"),
+      "Чью лексику показать?",
+      await studentPicker(db, "listfor", false),
     );
   } else if (command === "dupes") {
     if (!(await db.students()).length) {
@@ -347,10 +367,11 @@ async function saveVocabulary(env, db, message, state) {
     await send(env, message.chat.id, ADD_FORMAT);
     return;
   }
+  const allStudents = await db.students();
   const students =
     state.addingFor === "all"
-      ? await db.students()
-      : [await db.student(state.addingFor)];
+      ? allStudents
+      : allStudents.filter((row) => state.addingFor.includes(row.id));
   const today = clock(env).date;
   const showName = students.length > 1;
   const lines = [];
@@ -617,10 +638,39 @@ async function onButton(env, db, query) {
     return;
   }
 
+  if (action === "addpick" || action === "adddone") {
+    if (!isTeacher(env, userId)) return;
+    const state = await db.getState(userId);
+    const picking = state.picking || [];
+    if (action === "addpick") {
+      const selected = picking.includes(id)
+        ? picking.filter((item) => item !== id)
+        : [...picking, id];
+      await db.setState(userId, { picking: selected });
+      await telegram(env, "editMessageReplyMarkup", {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: await addKeyboard(db, selected),
+      });
+      return;
+    }
+    if (!picking.length) {
+      await send(env, chatId, "Сначала отметь хотя бы одного студента.");
+      return;
+    }
+    await db.setState(userId, { addingFor: picking });
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: ADD_FORMAT,
+    });
+    return;
+  }
+
   if (action === "addfor" || action === "listfor") {
     if (!isTeacher(env, userId)) return;
     if (action === "addfor") {
-      await db.setState(userId, { addingFor: value === "all" ? "all" : id });
+      await db.setState(userId, { addingFor: value === "all" ? "all" : [id] });
       await telegram(env, "editMessageText", {
         chat_id: chatId,
         message_id: messageId,
