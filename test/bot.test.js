@@ -1185,3 +1185,32 @@ test("начало фразы принимается с многоточием-�
   globalThis.fetch = originalFetch;
   assert.equal((await db.chunks(sonya.id))[0].frame, "I gave a wry smile when...");
 });
+
+test("студентка получает задание, после того как преподавательница выполнила /frames", async () => {
+  const { env, sent } = await environment();
+  const db = new Database(env.DB);
+  await say(env, TEACHER, "/addstudent Соня");
+  const [sonya] = await db.students();
+  await say(env, STUDENT, sonya.code);
+  await say(env, TEACHER, "/add");
+  await press(env, TEACHER, `addfor:${sonya.id}`);
+  await say(env, TEACHER, "make a decision | принять решение | I made a decision to move.");
+
+  await say(env, STUDENT, "✍️ Закончи фразу");
+  assert.match(lastText(sent), /Заданий пока нет/);
+
+  env.ANTHROPIC_API_KEY = "key";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (!url.startsWith("https://api.anthropic.com")) return originalFetch(url, options);
+    const answer = [{ chunk: "make a decision", frame: "The best decision I made was..." }];
+    return new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
+    );
+  };
+  await say(env, TEACHER, "/frames");
+  globalThis.fetch = originalFetch;
+
+  await say(env, STUDENT, "✍️ Закончи фразу");
+  assert.match(lastText(sent), /The best decision I made was\.\.\./);
+});
