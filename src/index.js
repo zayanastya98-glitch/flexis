@@ -404,6 +404,16 @@ function inline(text, data) {
   return { text, callback_data: data };
 }
 
+// Страница словаря с озвучкой: «look forward to» → .../look-forward-to
+function dictionaryUrl(text) {
+  const slug = text
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-");
+  return `https://dictionary.cambridge.org/dictionary/english/${slug}`;
+}
+
 function notificationsKeyboard(student) {
   const mark = (value) => (value ? "✅" : "⬜️");
   return {
@@ -1207,6 +1217,7 @@ async function onButton(env, db, query) {
               inline("🔁 Повторить", `again:${id}:${number}`),
               inline("✅ Знаю", `know:${id}:${number}`),
             ],
+            [{ text: "🔊 Произношение", url: dictionaryUrl(chunk.text) }],
           ],
         },
       });

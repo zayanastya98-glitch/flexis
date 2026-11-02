@@ -496,6 +496,17 @@ test("в задании кнопка «Назад» возвращает к вы
   assert.ok(!sent.some((item) => item.method === "sendMessage" && String(item.body.chat_id) === String(TEACHER) && /just some text/.test(item.body.text)));
 });
 
+test("после «Показать» есть ссылка на произношение в словаре", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks([sonya.id], [["Look forward to!", "", "", ""]], DAY);
+  await say(env, STUDENT, "🃏 Карточки");
+  await press(env, STUDENT, sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data);
+  const pronunciation = sent.filter((item) => item.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard[1][0];
+  assert.equal(pronunciation.text, "🔊 Произношение");
+  assert.match(pronunciation.url, /^https:\/\/dictionary\.cambridge\.org\/dictionary\/english\/[a-z-]+$/);
+});
+
 test("преподаватель переименовывает и удаляет студента", async () => {
   const { env } = await environment();
   const { db, sonya } = await studentWithFrame(env);
