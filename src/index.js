@@ -855,7 +855,6 @@ async function saveReply(env, db, message, state) {
 async function saveAnswer(env, db, message, student, state, text) {
   await db.addAnswer(student.id, state.frame, text);
   await db.clearState(message.from.id);
-  await send(env, message.chat.id, "Записано! Настя увидит твой ответ. ✅");
   let feedback = null;
   if ((await db.answersLastDay(student.id)) <= MAX_AI_CHECKS_PER_DAY) {
     feedback = await checkAnswer(env, state.frame, text);
