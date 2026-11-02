@@ -1132,3 +1132,35 @@ test("после фидбека сразу приходит следующая �
   const next = sent.find((item) => item.body.text?.startsWith("Закончи фразу"));
   assert.ok(next, "кнопка присылает вопрос");
 });
+
+test("начала фраз создаются при добавлении и командой /frames для старой лексики", async () => {
+  const { env, sent } = await environment();
+  const db = new Database(env.DB);
+  await say(env, TEACHER, "/addstudent Соня");
+  const [sonya] = await db.students();
+  await db.addChunks([sonya.id], [["wry smile", "", "", ""]], DAY);
+  env.ANTHROPIC_API_KEY = "key";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (!url.startsWith("https://api.anthropic.com")) return originalFetch(url, options);
+    const answer = [
+      { chunk: "wry smile", frame: "I gave a wry smile when..." },
+      { chunk: "make a decision", frame: "The best decision I made was..." },
+    ];
+    return new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
+    );
+  };
+
+  await say(env, TEACHER, "/frames");
+  const rows = await db.chunks(sonya.id);
+  assert.equal(rows[0].frame, "I gave a wry smile when...");
+  assert.match(lastText(sent), /Готово/);
+
+  await say(env, TEACHER, "/add");
+  await press(env, TEACHER, `addfor:${sonya.id}`);
+  await say(env, TEACHER, "make a decision | принять решение | I made a decision to move.");
+  const added = (await db.chunks(sonya.id)).find((row) => row.text === "make a decision");
+  assert.equal(added.frame, "The best decision I made was...");
+  globalThis.fetch = originalFetch;
+});

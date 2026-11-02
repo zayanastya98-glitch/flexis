@@ -448,6 +448,17 @@ export class Database {
     return new Set(rows.map((row) => row.phrase));
   }
 
+  // Начало фразы для всех чанков с таким текстом, у которых его ещё нет.
+  setFrame(text, frame) {
+    return this.run("UPDATE chunks SET frame = ? WHERE text = ? AND frame = ''", frame, text);
+  }
+
+  // Тексты чанков, у которых нет начала фразы.
+  async framelessTexts() {
+    const rows = await this.many("SELECT DISTINCT text FROM chunks WHERE frame = ''");
+    return rows.map((row) => row.text);
+  }
+
   // Тексты всех чанков всех студентов без повторов.
   async chunkTexts() {
     const rows = await this.many("SELECT DISTINCT text FROM chunks");

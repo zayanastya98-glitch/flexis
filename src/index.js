@@ -5,6 +5,7 @@ import { checkAnswer } from "./feedback.js";
 import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
+import { fillFrames } from "./frames.js";
 
 const TERMS_RUN_LIMIT = 60;
 
@@ -64,6 +65,7 @@ const TEACHER_HELP =
   "/reply — написать студенту от твоего имени\n" +
   "/stats — активность студентов\n" +
   "/terms — определить термины для кнопок произношения у старой лексики\n" +
+  "/frames — написать начала фраз для заданий «Закончи фразу»\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
   "/rename — переименовать студента\n" +
@@ -79,6 +81,7 @@ const TEACHER_COMMANDS = [
   { command: "reply", description: "Написать студенту" },
   { command: "stats", description: "Активность студентов" },
   { command: "terms", description: "Определить термины для старой лексики" },
+  { command: "frames", description: "Написать начала фраз для заданий" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
@@ -614,6 +617,31 @@ async function onCommand(env, db, message, command, argument) {
     const prefix = command === "rename" ? "renamefor" : "delfor";
     const title = command === "rename" ? "Какого студента переименовать?" : "Какого студента удалить?";
     await send(env, chatId, title, await studentPicker(db, prefix, false));
+  } else if (command === "frames") {
+    if (!env.ANTHROPIC_API_KEY) {
+      await send(env, chatId, "Без ключа ANTHROPIC_API_KEY начала фраз не создаются.");
+      return;
+    }
+    try {
+      const texts = await db.framelessTexts();
+      if (!texts.length) {
+        await send(env, chatId, "У всех чанков есть начало фразы ✅");
+        return;
+      }
+      await send(env, chatId, `Пишу начала фраз для ${Math.min(texts.length, TERMS_RUN_LIMIT)} чанков, это может занять минуту…`);
+      await fillFrames(env, db, texts.slice(0, TERMS_RUN_LIMIT));
+      const left = (await db.framelessTexts()).length;
+      await send(
+        env,
+        chatId,
+        left
+          ? `Осталось без начала фразы: ${left}. Запусти /frames ещё раз.`
+          : "Готово: у всех чанков есть начало фразы ✅",
+      );
+    } catch (error) {
+      console.error("/frames не сработал", error.message);
+      await send(env, chatId, `Не получилось написать начала фраз: ${error.message}`);
+    }
   } else if (command === "terms") {
     if (!env.ANTHROPIC_API_KEY) {
       await send(env, chatId, "Без ключа ANTHROPIC_API_KEY термины не определяются.");
@@ -773,6 +801,7 @@ async function saveVocabulary(env, db, message, state) {
     if (fresh.length) {
       await db.addChunks([student.id], fresh, today);
       await rememberTerms(env, db, fresh.map((row) => row[0]));
+      await fillFrames(env, db, fresh.filter((row) => !row[3]).map((row) => row[0]));
     }
     added += fresh.length;
     skipped += duplicates.length;
@@ -891,6 +920,7 @@ async function saveStudentChunks(env, db, message, student, text) {
   if (fresh.length) {
     await db.addChunks([student.id], fresh, clock(env).date);
     await rememberTerms(env, db, fresh.map((row) => row[0]));
+    await fillFrames(env, db, fresh.filter((row) => !row[3]).map((row) => row[0]));
     await db.increment(student.id, "own_chunks", fresh.length);
   }
   const reply = [];
