@@ -35,7 +35,8 @@ async function environment() {
       method: url.split("/").at(-1),
       body: JSON.parse(options.body),
     });
-    return new Response(JSON.stringify({ ok: true, result: {} }));
+    const result = url.endsWith("/sendPoll") ? { poll: { id: `poll${sent.length}` } } : {};
+    return new Response(JSON.stringify({ ok: true, result }));
   };
   return {
     env: {
@@ -272,7 +273,8 @@ test("настройка времени и рассылка по расписа�
   assert.equal(sent.length, count);
 });
 
-test("студент добавляет свои чанки", async () => {
+test("студент добавляет свои чанки", async (t) => {
+  t.mock.method(Math, "random", () => 0.9);
   const { env, sent } = await environment();
   await say(env, TEACHER, "/addstudent Анна");
   await say(env, TEACHER, "/addstudent Борис");
@@ -699,6 +701,66 @@ test("/stats показывает активность студентов", asyn
   const count = sent.length;
   await say(env, STUDENT, "/stats");
   assert.ok(sent.slice(count).every((item) => !item.body.text?.includes("Анна:")));
+});
+
+test("квиз-опрос проверяет знание и считается в прогрессе", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    [
+      ["catch a bus", "успеть на автобус", "", ""],
+      ["look forward to", "ждать с нетерпением", "", ""],
+      ["feel anxious", "тревожиться", "", ""],
+      ["pass the time", "скоротать время", "", ""],
+    ],
+    DAY,
+  );
+
+  await say(env, STUDENT, "🧩 Квиз");
+  const poll = sent.find((item) => item.method === "sendPoll");
+  assert.equal(poll.body.type, "quiz");
+  assert.equal(poll.body.is_anonymous, false);
+  assert.equal(poll.body.options.length, 4);
+  const translation = poll.body.question.match(/«(.+)»/)[1];
+  const correctChunk = (await db.chunks(sonya.id)).find((c) => c.translation === translation);
+  assert.equal(poll.body.options[poll.body.correct_option_id].text, correctChunk.text);
+
+  const pollId = `poll${sent.indexOf(poll) + 1}`;
+  const correct = poll.body.correct_option_id;
+  // Чужой ответ не засчитывается.
+  await post(env, { poll_answer: { poll_id: pollId, user: { id: 99 }, option_ids: [correct] } });
+  // Правильный ответ засчитывается.
+  await post(env, { poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [correct] } });
+  // Повторная смена ответа уже не меняет счёт.
+  await post(env, {
+    poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [correct === 0 ? 1 : 0] },
+  });
+
+  await say(env, STUDENT, "🏅 Прогресс");
+  assert.match(lastText(sent), /Квиз: верно 1 из 1/);
+  assert.match(lastText(sent), /Серия: 1 дн\. \(рекорд: 1\)/);
+});
+
+test("квиз без достаточного количества лексики не ломается", async () => {
+  const { env, sent } = await environment();
+  await studentWithFrame(env);
+  await say(env, STUDENT, "🧩 Квиз");
+  assert.match(lastText(sent), /минимум 4 разных чанка/);
+  assert.ok(!sent.some((item) => item.method === "sendPoll"));
+});
+
+test("серия дней растёт по дням и сбрасывается после пропуска", async () => {
+  const { env } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.touch(sonya.id, "t", "2026-11-02");
+  await db.touch(sonya.id, "t", "2026-11-02");
+  await db.touch(sonya.id, "t", "2026-11-03");
+  assert.equal((await db.progressRow(sonya.id)).streak, 2);
+  await db.touch(sonya.id, "t", "2026-11-05");
+  const row = await db.progressRow(sonya.id);
+  assert.equal(row.streak, 1);
+  assert.equal(row.best_streak, 2);
 });
 
 test("ошибка Telegram не ломает ответ сервера", async () => {

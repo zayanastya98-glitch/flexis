@@ -4,6 +4,13 @@
 const INTERVALS = { 1: 1, 2: 3, 3: 7, 4: 14, 5: 30 };
 // Без похожих символов (0/O, 1/I), чтобы код было легко ввести.
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+// Предыдущий день в формате YYYY-MM-DD.
+function previousDay(day) {
+  const date = new Date(`${day}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
 // Сколько студентов обрабатывать за один запуск расписания:
 // бесплатный тариф ограничивает число запросов к Telegram.
 export const NOTIFY_BATCH = 10;
@@ -49,6 +56,20 @@ const SCHEMA = [
     last_seen TEXT,
     own_chunks INTEGER NOT NULL DEFAULT 0,
     cards_done INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS student_progress (
+    student_id INTEGER PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
+    streak INTEGER NOT NULL DEFAULT 0,
+    best_streak INTEGER NOT NULL DEFAULT 0,
+    last_day TEXT,
+    quiz_total INTEGER NOT NULL DEFAULT 0,
+    quiz_correct INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS quiz_polls (
+    poll_id TEXT PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    correct_index INTEGER NOT NULL,
+    answered INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS user_state (
     telegram_id INTEGER PRIMARY KEY,
@@ -302,6 +323,12 @@ export class Database {
         )
         .bind(today, studentId),
       this.d1.prepare("UPDATE student_stats SET cards_done = 0 WHERE student_id = ?").bind(studentId),
+      this.d1
+        .prepare(
+          `UPDATE student_progress SET streak = 0, best_streak = 0, last_day = NULL,
+             quiz_total = 0, quiz_correct = 0 WHERE student_id = ?`,
+        )
+        .bind(studentId),
       this.d1.prepare("DELETE FROM answers WHERE student_id = ?").bind(studentId),
       this.d1
         .prepare(
@@ -313,13 +340,88 @@ export class Database {
   }
 
   // ---------- Активность ----------
-  touch(studentId, when) {
-    return this.run(
+  // Отмечает активность студента и считает серию дней подряд.
+  async touch(studentId, when, day) {
+    await this.run(
       `INSERT INTO student_stats (student_id, last_seen) VALUES (?, ?)
        ON CONFLICT (student_id) DO UPDATE SET last_seen = excluded.last_seen`,
       studentId,
       when,
     );
+    const row = await this.one(
+      "SELECT streak, best_streak, last_day FROM student_progress WHERE student_id = ?",
+      studentId,
+    );
+    if (row && row.last_day === day) return;
+    const streak = row && row.last_day === previousDay(day) ? row.streak + 1 : 1;
+    const best = Math.max(row ? row.best_streak : 0, streak);
+    await this.run(
+      `INSERT INTO student_progress (student_id, streak, best_streak, last_day)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (student_id) DO UPDATE SET streak = excluded.streak,
+         best_streak = excluded.best_streak, last_day = excluded.last_day`,
+      studentId,
+      streak,
+      best,
+      day,
+    );
+  }
+
+  incrementProgress(studentId, column) {
+    if (!["quiz_total", "quiz_correct"].includes(column)) {
+      throw new Error(`Unknown progress column: ${column}`);
+    }
+    return this.run(
+      `INSERT INTO student_progress (student_id, ${column}) VALUES (?, 1)
+       ON CONFLICT (student_id) DO UPDATE SET ${column} = ${column} + 1`,
+      studentId,
+    );
+  }
+
+  async progressRow(studentId) {
+    const progress =
+      (await this.one("SELECT * FROM student_progress WHERE student_id = ?", studentId)) || {};
+    const stats =
+      (await this.one("SELECT * FROM student_stats WHERE student_id = ?", studentId)) || {};
+    const chunks = await this.one(
+      "SELECT COUNT(*) AS total FROM chunks WHERE student_id = ?",
+      studentId,
+    );
+    const answers = await this.one(
+      "SELECT COUNT(*) AS total FROM answers WHERE student_id = ?",
+      studentId,
+    );
+    return {
+      streak: progress.streak || 0,
+      best_streak: progress.best_streak || 0,
+      quiz_total: progress.quiz_total || 0,
+      quiz_correct: progress.quiz_correct || 0,
+      own_chunks: stats.own_chunks || 0,
+      cards_done: stats.cards_done || 0,
+      chunks: chunks.total,
+      answers: answers.total,
+    };
+  }
+
+  // ---------- Квиз ----------
+  saveQuiz(pollId, studentId, correctIndex) {
+    return this.run(
+      "INSERT INTO quiz_polls (poll_id, student_id, correct_index) VALUES (?, ?, ?)",
+      pollId,
+      studentId,
+      correctIndex,
+    );
+  }
+
+  quizPoll(pollId) {
+    return this.one("SELECT * FROM quiz_polls WHERE poll_id = ?", pollId);
+  }
+
+  // Засчитывается только первый ответ: повторные изменения игнорируются.
+  async answerQuiz(pollId, studentId, correct) {
+    await this.run("UPDATE quiz_polls SET answered = 1 WHERE poll_id = ?", pollId);
+    await this.incrementProgress(studentId, "quiz_total");
+    if (correct) await this.incrementProgress(studentId, "quiz_correct");
   }
 
   increment(studentId, column, by = 1) {
@@ -339,10 +441,12 @@ export class Database {
       `SELECT s.id, s.name, s.telegram_id, st.last_seen,
               COALESCE(st.own_chunks, 0) AS own_chunks,
               COALESCE(st.cards_done, 0) AS cards_done,
+              COALESCE(pr.streak, 0) AS streak,
               (SELECT COUNT(*) FROM chunks c WHERE c.student_id = s.id) AS chunks,
               (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id) AS answers
        FROM students s
        LEFT JOIN student_stats st ON st.student_id = s.id
+       LEFT JOIN student_progress pr ON pr.student_id = s.id
        ORDER BY s.name`,
     );
   }

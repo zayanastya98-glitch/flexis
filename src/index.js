@@ -9,6 +9,8 @@ const FRAMES = "✍️ Закончи фразу";
 const NOTIFICATIONS = "🔔 Уведомления";
 const ADD_CHUNK = "➕ Добавить чанк";
 const NOTES = "📝 Заметки";
+const QUIZ = "🧩 Квиз";
+const PROGRESS = "🏅 Прогресс";
 // Запас до лимита Telegram: к тексту добавляется заголовок с датой.
 const MAX_NOTE_LENGTH = 3900;
 const MAX_DUPES_CHECK = 150;
@@ -20,6 +22,7 @@ const MENU = {
   keyboard: [
     [{ text: CARDS }, { text: FRAMES }],
     [{ text: ADD_CHUNK }, { text: NOTES }],
+    [{ text: QUIZ }, { text: PROGRESS }],
     [{ text: NOTIFICATIONS }],
   ],
   resize_keyboard: true,
@@ -156,10 +159,75 @@ async function statsText(env, db) {
     return (
       `${row.name}: ${status}\n` +
       `чанков ${row.chunks} (из них добавлено сами ${row.own_chunks}) · ` +
-      `карточек ${row.cards_done} · ответов ${row.answers}`
+      `карточек ${row.cards_done} · ответов ${row.answers} · серия ${row.streak} дн.`
     );
   });
   return blocks.join("\n\n").slice(0, 4000);
+}
+
+function shuffle(items) {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+function badgesFor(p) {
+  const badges = [];
+  if (p.chunks >= 1) badges.push("🌱 Первые шаги: первая лексика");
+  if (p.own_chunks >= 5) badges.push("✍️ Автор: 5 чанков добавлено самостоятельно");
+  if (p.answers >= 10) badges.push("📝 Практик: 10 ответов на задания");
+  if (p.cards_done >= 10) badges.push("🃏 Память: 10 карточек пройдено");
+  if (p.quiz_correct >= 10) badges.push("🧩 Квиз-мастер: 10 верных ответов");
+  if (p.best_streak >= 7) badges.push("🔥 Неделя подряд: 7 дней без перерыва");
+  if (p.best_streak >= 30) badges.push("🏆 Месяц подряд: 30 дней");
+  return badges;
+}
+
+async function progressText(db, student) {
+  const p = await db.progressRow(student.id);
+  const badges = badgesFor(p);
+  return [
+    `🔥 Серия: ${p.streak} дн. (рекорд: ${p.best_streak})`,
+    `🧩 Квиз: верно ${p.quiz_correct} из ${p.quiz_total}`,
+    `🃏 Карточек пройдено: ${p.cards_done}`,
+    "",
+    "Бейджи:",
+    ...(badges.length ? badges.map((badge) => `• ${badge}`) : ["пока нет, но всё впереди! 🚀"]),
+  ].join("\n");
+}
+
+// Квиз: чанк на русском, четыре варианта на английском из лексики студента.
+async function sendQuiz(env, db, chatId, student) {
+  const all = await db.chunks(student.id);
+  const texts = [...new Set(all.map((chunk) => chunk.text))];
+  const withTranslation = all.filter((chunk) => chunk.translation);
+  if (!withTranslation.length || texts.length < 4) {
+    await send(
+      env,
+      chatId,
+      "Для квиза нужно минимум 4 разных чанка и хотя бы один с переводом. Добавь лексику.",
+    );
+    return;
+  }
+  const correct = withTranslation[Math.floor(Math.random() * withTranslation.length)];
+  const others = shuffle(texts.filter((text) => text !== correct.text)).slice(0, 3);
+  const options = shuffle([correct.text, ...others]);
+  const result = await telegram(env, "sendPoll", {
+    chat_id: chatId,
+    question: `Как сказать по-английски: «${correct.translation}»?`.slice(0, 300),
+    options: options.map((text) => ({ text: text.slice(0, 100) })),
+    type: "quiz",
+    correct_option_id: options.indexOf(correct.text),
+    is_anonymous: false,
+  });
+  await db.saveQuiz(result.poll.id, student.id, options.indexOf(correct.text));
+}
+
+// Telegram присылает ответ на квиз, мы его засчитываем.
+async function onPollAnswer(env, db, answer) {
+  const quiz = await db.quizPoll(answer.poll_id);
+  if (!quiz || quiz.answered || !answer.option_ids.length) return;
+  const student = await db.student(quiz.student_id);
+  if (!student || student.telegram_id !== answer.user.id) return;
+  await db.answerQuiz(answer.poll_id, student.id, answer.option_ids[0] === quiz.correct_index);
 }
 
 function formatDate(isoDate) {
@@ -627,7 +695,7 @@ async function onText(env, db, message) {
     return;
   }
 
-  await db.touch(student.id, new Date().toISOString());
+  await db.touch(student.id, new Date().toISOString(), clock(env).date);
 
   if (text === CARDS) {
     await db.clearState(userId);
@@ -661,6 +729,12 @@ async function onText(env, db, message) {
         return [inline(`${formatDate(note.lesson_date)} · ${preview}`, `note:${note.id}`)];
       }),
     });
+  } else if (text === QUIZ) {
+    await db.clearState(userId);
+    await sendQuiz(env, db, chatId, student);
+  } else if (text === PROGRESS) {
+    await db.clearState(userId);
+    await send(env, chatId, await progressText(db, student));
   } else if (text === ADD_CHUNK) {
     await db.setState(userId, { awaiting: "chunk" });
     await send(env, chatId, STUDENT_ADD_FORMAT);
@@ -803,7 +877,7 @@ async function onButton(env, db, query) {
   const student = await db.studentByTelegram(userId);
   if (!student) return;
 
-  await db.touch(student.id, new Date().toISOString());
+  await db.touch(student.id, new Date().toISOString(), clock(env).date);
 
   if (action === "show") {
     const chunk = await db.chunk(id, student.id);
@@ -851,6 +925,10 @@ async function onButton(env, db, query) {
 }
 
 async function onUpdate(env, db, update) {
+  if (update.poll_answer) {
+    await onPollAnswer(env, db, update.poll_answer);
+    return;
+  }
   if (update.callback_query) {
     await onButton(env, db, update.callback_query);
     return;
@@ -934,7 +1012,7 @@ async function setup(env, origin) {
     await telegram(env, "setWebhook", {
       url: `${origin}/telegram`,
       secret_token: await webhookSecret(env),
-      allowed_updates: ["message", "callback_query"],
+      allowed_updates: ["message", "callback_query", "poll_answer"],
     });
   } catch (error) {
     console.error("Ошибка настройки", error.message);
