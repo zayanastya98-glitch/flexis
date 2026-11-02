@@ -27,7 +27,8 @@ export async function makeQuestions(env, chunks) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 250,
+        // Запас на внутренние рассуждения модели: без него текста может не быть.
+        max_tokens: 1500,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: `Chunks: ${chunks.join("; ")}` }],
       }),
