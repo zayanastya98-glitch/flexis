@@ -1124,13 +1124,13 @@ test("после фидбека сразу приходит следующая �
 
   await say(env, STUDENT, "✍️ Закончи фразу");
   await say(env, STUDENT, "work in an office");
-  const questions = sent.filter((item) => item.body.text?.startsWith("Закончи фразу"));
+  const questions = sent.filter((item) => item.body.text?.startsWith("Продолжи фразу"));
   assert.equal(questions.length, 2, "после ответа идёт следующий вопрос");
   assert.ok(JSON.stringify(questions.at(-1).body.reply_markup).includes("nextframe"));
 
   sent.length = 0;
   await press(env, STUDENT, "nextframe");
-  const next = sent.find((item) => item.body.text?.startsWith("Закончи фразу"));
+  const next = sent.find((item) => item.body.text?.startsWith("Продолжи фразу"));
   assert.ok(next, "кнопка присылает вопрос");
 });
 

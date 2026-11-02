@@ -27,6 +27,11 @@ const CARD_SESSION = 10;
 const MAX_AI_CHECKS_PER_DAY = 30;
 // Сколько чанков студент может добавить одним сообщением.
 const MAX_STUDENT_CHUNKS = 20;
+// Инструкция к заданию «Закончи фразу»: что делать и пример.
+const FRAME_INTRO =
+  "Продолжи фразу. Это может быть про тебя, твоё мнение или логическое продолжение.\n\n" +
+  "Пример:\nты видишь: I used to...\nты продолжаешь: I used to live in a small town.";
+
 const MENU = {
   keyboard: [
     [{ text: CARDS }, { text: FRAMES }],
@@ -781,7 +786,7 @@ async function sendCard(env, db, chatId, student, number = 1) {
 
 async function askFrame(env, db, chatId, userId, chunk) {
   await db.setState(userId, { awaiting: "frame", frame: chunk.frame });
-  await send(env, chatId, `Закончи фразу о себе:\n\n${chunk.frame}`, {
+  await send(env, chatId, `${FRAME_INTRO}\n\n${chunk.frame}`, {
     inline_keyboard: [[inline("➡️ Следующая фраза", "nextframe")]],
   });
 }
@@ -1166,7 +1171,7 @@ async function onButton(env, db, query) {
         await send(env, chatId, `У ученика ${target.name} пока нет заданий «Закончи фразу».`);
         return;
       }
-      await send(env, chatId, `${head}Закончи фразу о себе:\n\n${chunk.frame}`, next);
+      await send(env, chatId, `${head}${FRAME_INTRO}\n\n${chunk.frame}`, next);
       return;
     }
     if (action === "previewcard") {
@@ -1528,7 +1533,7 @@ async function sendNotifications(env, db) {
           await send(
             env,
             chatId,
-            `Задание дня: закончи фразу о себе\n\n${chunk.frame}`,
+            `Задание дня: продолжи фразу\n\n${FRAME_INTRO}\n\n${chunk.frame}`,
             { inline_keyboard: [[inline("Ответить", `frame:${chunk.id}`)]] },
           );
         }
