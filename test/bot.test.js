@@ -210,7 +210,7 @@ test("полный сценарий: преподаватель и студен�
   // Посторонний с этой кнопкой не начинает добавление.
   await press(env, 99, pick);
   await say(env, 99, "hack | x");
-  assert.match(lastText(sent), /Не нашёл/);
+  assert.match(lastText(sent), /Такого ID нет/);
 
   await say(env, STUDENT, code);
   assert.match(lastText(sent), /^Привеет :\)/);
@@ -218,6 +218,7 @@ test("полный сценарий: преподаватель и студен�
 
   await say(env, STUDENT, "🃏 Карточки");
   assert.equal(lastText(sent), "used to");
+  assert.equal(sent.at(-1).body.entities[0].length, "used to".length);
   const show = sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data;
   await press(env, STUDENT, show);
   assert.match(lastText(sent), /Перевод: раньше/);
@@ -256,7 +257,10 @@ test("настройка времени и рассылка по расписа�
   await db.setNotifyTime(student.id, "00:00", null);
   await runCron(env);
   const texts = sent.map((item) => item.body.text);
-  assert.ok(texts.some((text) => text?.startsWith("Чанк дня")));
+  const daily = sent.find((item) => item.body.text?.startsWith("Чанк дня"));
+  const [bold] = daily.body.entities;
+  assert.equal(bold.type, "bold");
+  assert.equal(daily.body.text.slice(bold.offset, bold.offset + bold.length), "used to");
   assert.ok(texts.some((text) => text?.startsWith("Задание дня")));
 
   const count = sent.length;

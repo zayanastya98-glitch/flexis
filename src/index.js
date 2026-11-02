@@ -35,7 +35,7 @@ const WELCOME =
   "!помним, что мы стараемся работать со словосочетаниями, а не отдельными словами. " +
   "Йеей! давай пробовать!";
 const TEACHER_HELP =
-  "Команды преподавателя:\n" +
+  "Команды Насти:\n" +
   "/addstudent Имя — создать студента и его ID\n" +
   "/students — список студентов и их ID\n" +
   "/add — добавить лексику\n" +
@@ -88,12 +88,18 @@ async function telegram(env, method, payload) {
   return result.result;
 }
 
-function send(env, chatId, text, replyMarkup) {
+function send(env, chatId, text, replyMarkup, entities) {
   return telegram(env, "sendMessage", {
     chat_id: chatId,
     text,
     ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    ...(entities ? { entities } : {}),
   });
+}
+
+// Выделяет чанк жирным. Спецсимволы в тексте при этом не ломают сообщение.
+function boldChunk(chunk, offset = 0) {
+  return [{ type: "bold", offset, length: chunk.text.length }];
 }
 
 function isTeacher(env, userId) {
@@ -158,7 +164,7 @@ async function onCommand(env, db, message, command, argument) {
     } else if (teacher) {
       await send(env, chatId, TEACHER_HELP);
     } else {
-      await send(env, chatId, "Привет! Введи свой ID от преподавателя.");
+      await send(env, chatId, "Привет! Введи свой ID от Насти.");
     }
     return;
   }
@@ -174,7 +180,7 @@ async function onCommand(env, db, message, command, argument) {
   if (command === "logout") {
     await db.clearState(userId);
     await db.unlinkStudent(userId);
-    await send(env, chatId, "Ты вышел из аккаунта. Чтобы войти, введи ID.", {
+    await send(env, chatId, "Залогинься снова, чтобы продолжить работу: введи свой ID.", {
       remove_keyboard: true,
     });
     return;
@@ -238,9 +244,13 @@ async function sendCard(env, db, chatId, student) {
     await send(env, chatId, "На сегодня карточек нет. Отличная работа! 🎉");
     return;
   }
-  await send(env, chatId, chunk.text, {
-    inline_keyboard: [[inline("Показать", `show:${chunk.id}`)]],
-  });
+  await send(
+    env,
+    chatId,
+    chunk.text,
+    { inline_keyboard: [[inline("Показать", `show:${chunk.id}`)]] },
+    boldChunk(chunk),
+  );
 }
 
 async function askFrame(env, db, chatId, userId, chunk) {
@@ -266,7 +276,7 @@ async function saveVocabulary(env, db, message, state) {
 async function saveAnswer(env, db, message, student, state, text) {
   await db.addAnswer(student.id, state.frame, text);
   await db.clearState(message.from.id);
-  await send(env, message.chat.id, "Записала! Преподаватель увидит твой ответ. ✅");
+  await send(env, message.chat.id, "Записано! Настя увидит твой ответ. ✅");
   if (env.TEACHER_ID) {
     try {
       await send(env, env.TEACHER_ID, `${student.name}\n${state.frame}\n→ ${text}`);
@@ -335,7 +345,7 @@ async function onText(env, db, message) {
     if (name) {
       await send(env, chatId, WELCOME, MENU);
     } else {
-      await send(env, chatId, "Не нашёл такой ID. Проверь его или спроси преподавателя.");
+      await send(env, chatId, "Такого ID нет. Проверь его или спроси Настю.");
     }
     return;
   }
@@ -413,6 +423,7 @@ async function onButton(env, db, query) {
         chat_id: chatId,
         message_id: messageId,
         text: cardDetails(chunk),
+        entities: boldChunk(chunk),
         reply_markup: {
           inline_keyboard: [
             [inline("🔁 Повторить", `again:${id}`), inline("✅ Знаю", `know:${id}`)],
@@ -478,7 +489,14 @@ async function sendNotifications(env, db) {
       if (student.notify_chunk) {
         const chunk = await db.nextDailyChunk(student.id, date);
         if (chunk) {
-          await send(env, chatId, `Чанк дня ✨\n\n${cardDetails(chunk)}`);
+          const title = "Чанк дня ✨\n\n";
+          await send(
+            env,
+            chatId,
+            `${title}${cardDetails(chunk)}`,
+            null,
+            boldChunk(chunk, title.length),
+          );
         }
       }
       if (student.notify_frame) {
