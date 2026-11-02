@@ -438,6 +438,40 @@ test("карточки идут сессиями по 10 со счётчиком
   assert.match(lastText(sent), /^1\/10/);
 });
 
+test("после сессии карточек задание с ответом уходит Насте", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    Array.from({ length: 10 }, (_, i) => [`phrase number ${i}`, "", "", ""]),
+    DAY,
+  );
+  await say(env, STUDENT, "🃏 Карточки");
+  const last = () => sent.filter((item) => item.method === "sendMessage" || item.method === "editMessageText").at(-1).body;
+  for (let n = 1; n <= 10; n++) {
+    await press(env, STUDENT, last().reply_markup.inline_keyboard[0][0].callback_data);
+    await press(env, STUDENT, last().reply_markup.inline_keyboard[0][1].callback_data);
+  }
+  await press(env, STUDENT, "task");
+  assert.match(lastText(sent), /Чанки:\n[\s\S]*• phrase number 0/);
+
+  // Текстовый ответ уходит Насте.
+  await say(env, STUDENT, "I met a phrase number 0 today.");
+  const toTeacher = () =>
+    sent.filter((item) => item.method === "sendMessage" && String(item.body.chat_id) === String(TEACHER)).at(-1);
+  assert.match(toTeacher().body.text, /I met a phrase number 0 today\./);
+  assert.match(lastText(sent), /Отправлено Насте/);
+
+  // Голосовой ответ пересылается Насте.
+  await press(env, STUDENT, "task");
+  await post(env, {
+    message: { message_id: 77, chat: { id: STUDENT }, from: { id: STUDENT }, voice: { file_id: "abc" } },
+  });
+  assert.ok(
+    sent.some((item) => item.method === "forwardMessage" && item.body.message_id === 77 && String(item.body.chat_id) === String(TEACHER)),
+  );
+});
+
 test("преподаватель переименовывает и удаляет студента", async () => {
   const { env } = await environment();
   const { db, sonya } = await studentWithFrame(env);

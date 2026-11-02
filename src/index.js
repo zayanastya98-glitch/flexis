@@ -3,6 +3,7 @@
 import { Database } from "./db.js";
 import { checkAnswer } from "./feedback.js";
 import { compareChunks, findDuplicatePairs } from "./similar.js";
+import { makeQuestions } from "./tasks.js";
 
 const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
@@ -600,7 +601,10 @@ async function sendCard(env, db, chatId, student, number = 1) {
       chatId,
       `Сессия из ${CARD_SESSION} карточек пройдена 🎉\n\nПрактиковать ещё или закончить?`,
       {
-        inline_keyboard: [[inline("🔁 Ещё 10", "cardsmore"), inline("🏁 Закончить", "cardsend")]],
+        inline_keyboard: [
+          [inline("📝 Задание по этим чанкам", "task")],
+          [inline("🔁 Ещё 10", "cardsmore"), inline("🏁 Закончить", "cardsend")],
+        ],
       },
     );
     return;
@@ -610,6 +614,11 @@ async function sendCard(env, db, chatId, student, number = 1) {
     await send(env, chatId, "На сегодня карточек нет. Отличная работа! 🎉");
     return;
   }
+  // Запоминаем чанки сессии: по ним потом строится задание.
+  const session = await db.getState(student.telegram_id);
+  const ids = number === 1 ? [] : session.session || [];
+  await db.setState(student.telegram_id, { ...session, session: [...ids, chunk.id] });
+
   const counter = `${number}/${CARD_SESSION}\n\n`;
   const keyboard = { inline_keyboard: [[inline("Показать", `show:${chunk.id}:${number}`)]] };
   // Без перевода карточка всегда показывается на английском.
@@ -912,11 +921,53 @@ async function onText(env, db, message) {
     await saveStudentChunks(env, db, message, student, text);
   } else if (state.awaiting === "frame") {
     await saveAnswer(env, db, message, student, state, text);
+  } else if (state.awaiting === "task") {
+    await saveTask(env, db, message, student, state, text);
   } else if (state.awaiting === "time") {
     await saveTime(env, db, message, student, text);
   } else {
     await send(env, chatId, "Выбери действие в меню 👇", MENU);
   }
+}
+
+// Ответ на задание после карточек уходит Насте на проверку.
+async function sendTaskToTeacher(env, student, task, answer) {
+  if (!env.TEACHER_ID) return;
+  const questions = task.questions ? `${task.questions.join("\n")}\n\n` : "";
+  const report = `📝 Задание: ${student.name}\n${questions}Чанки: ${task.chunks.join(", ")}\n\n→ ${answer}`;
+  await send(env, env.TEACHER_ID, report.slice(0, 4000), {
+    inline_keyboard: [[inline("Ответить", `replyto:${student.id}`)]],
+  });
+}
+
+async function saveTask(env, db, message, student, state, text) {
+  const { awaiting, task, ...rest } = state;
+  await db.setState(message.from.id, rest);
+  await sendTaskToTeacher(env, student, task, text);
+  await send(env, message.chat.id, "Отправлено Насте на проверку ✅");
+}
+
+// Голосовой ответ на задание пересылаем Насте как есть.
+async function onVoice(env, db, message) {
+  const userId = message.from.id;
+  const student = await db.studentByTelegram(userId);
+  if (!student) return;
+  const state = await db.getState(userId);
+  if (state.awaiting !== "task") {
+    await send(env, message.chat.id, "Голосовые принимаю только в задании 📝");
+    return;
+  }
+  const { awaiting, task, ...rest } = state;
+  await db.setState(userId, rest);
+  await sendTaskToTeacher(env, student, task, "🎤 голосовой ответ ниже");
+  if (env.TEACHER_ID) {
+    await telegram(env, "forwardMessage", {
+      chat_id: env.TEACHER_ID,
+      from_chat_id: message.chat.id,
+      message_id: message.message_id,
+    });
+  }
+  await send(env, message.chat.id, "Отправлено Насте на проверку ✅");
 }
 
 async function onButton(env, db, query) {
@@ -970,6 +1021,33 @@ async function onButton(env, db, query) {
       message_id: messageId,
       text: `Прогресс обнулён: ${student.name}.`,
     });
+    return;
+  }
+
+  if (action === "task") {
+    const student = await db.studentByTelegram(userId);
+    if (!student) return;
+    const state = await db.getState(userId);
+    const chunks = [];
+    for (const chunkId of state.session || []) {
+      const chunk = await db.chunk(chunkId, student.id);
+      if (chunk && !chunks.includes(chunk.text)) chunks.push(chunk.text);
+    }
+    if (!chunks.length) {
+      await send(env, chatId, "Сначала пройди карточки, тогда появится задание.");
+      return;
+    }
+    await telegram(env, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId });
+    const questions = await makeQuestions(env, chunks);
+    await db.setState(userId, { ...state, awaiting: "task", task: { chunks, questions } });
+    const intro = questions
+      ? `Ответь на вопросы, используя чанки ниже. Можно письменно или голосовым:\n\n${questions.join("\n")}`
+      : "Напиши по одному предложению с каждым чанком. Можно письменно или голосовым:";
+    await send(
+      env,
+      chatId,
+      `📝 Задание\n\n${intro}\n\nЧанки:\n${chunks.map((chunk) => `• ${chunk}`).join("\n")}`,
+    );
     return;
   }
 
@@ -1156,6 +1234,10 @@ async function onUpdate(env, db, update) {
     return;
   }
   const message = update.message;
+  if (message && message.voice && message.from) {
+    await onVoice(env, db, message);
+    return;
+  }
   if (!message || !message.text || !message.from) return;
   const command = message.text.match(/^\/([a-zA-Z_]+)(?:@\S+)?(?:\s+([\s\S]*))?$/);
   if (command) {
