@@ -411,28 +411,44 @@ const SIMPLE_WORDS = new Set(
     "no so as if than then there here").split(" "),
 );
 
-// Самое «содержательное» слово чанка: «wry smile» → wry, «be rooted in» → rooted.
-function keyWord(text) {
+const PARTICLES = new Set([
+  "up", "out", "off", "on", "in", "away", "back", "over", "down", "through", "around",
+  "along", "about", "apart", "by", "forward", "ahead", "into", "together", "round",
+]);
+
+// Что искать в словаре:
+// фразовый глагол → «weed out» (глагол + частица);
+// идиома (4+ слов без частицы) → вся фраза целиком;
+// коллокация → ключевое слово: «wry smile» → wry, «play havoc with» → havoc.
+function headword(text) {
   const words = text
     .toLowerCase()
     .replace(/[^a-z\s'-]/g, "")
     .split(/\s+/)
-    .filter((word) => word && !SIMPLE_WORDS.has(word));
-  return words.sort((a, b) => b.length - a.length)[0] || text.toLowerCase();
+    .filter(Boolean);
+  if (words.length >= 2 && PARTICLES.has(words[1]) && !SIMPLE_WORDS.has(words[0])) {
+    return `${words[0]} ${words[1]}`;
+  }
+  if (words.length >= 4) return words.join(" ");
+  const content = words.filter((word) => !SIMPLE_WORDS.has(word));
+  if (!content.length) return words.join(" ");
+  // В двусловных парах первое слово обычно важнее: «wry smile» → wry.
+  if (words.length === 2) return content[0];
+  return content.sort((a, b) => b.length - a.length)[0];
 }
 
-// Ряд кнопок произношения: слово в словаре и, если есть, фраза в YouGlish.
+// Ряд кнопок произношения: термин в словаре и, если есть, фраза в YouGlish.
 function pronunciationRow(text) {
-  const word = keyWord(text);
-  const row = [{ text: `🔊 ${word}`, url: dictionaryUrl(word) }];
+  const term = headword(text);
+  const row = [{ text: `🔊 ${term}`, url: dictionaryUrl(term) }];
   const video = youglishUrl(text);
   if (video) row.push({ text: "🎬 Фраза", url: video });
   return row;
 }
 
-// Словарь Cambridge по одному слову: определение и произношение.
-function dictionaryUrl(word) {
-  const slug = word.replace(/'/g, "");
+// Словарь Cambridge: слово, фразовый глагол или идиома.
+function dictionaryUrl(term) {
+  const slug = term.replace(/'/g, "").trim().replace(/\s+/g, "-");
   return `https://dictionary.cambridge.org/dictionary/english/${encodeURIComponent(slug)}`;
 }
 
