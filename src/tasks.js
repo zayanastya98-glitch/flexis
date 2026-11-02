@@ -11,8 +11,13 @@ Reply in plain text: one question per line, no numbering, no answers, no Markdow
 
 // Возвращает список вопросов или null: тогда бот просит написать предложения с чанками.
 export async function makeQuestions(env, chunks) {
-  if (!env.ANTHROPIC_API_KEY || !chunks.length) return null;
+  if (!env.ANTHROPIC_API_KEY) {
+    console.log("Задание: нет ключа ANTHROPIC_API_KEY");
+    return null;
+  }
+  if (!chunks.length) return null;
   try {
+    console.log("Задание: запрос к API");
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -38,7 +43,11 @@ export async function makeQuestions(env, chunks) {
       .map((line) => line.trim())
       .filter(Boolean)
       .slice(0, MAX_QUESTIONS);
-    return questions.length ? questions : null;
+    if (!questions.length) {
+      console.log("Задание: пустой ответ", JSON.stringify(result).slice(0, 300));
+      return null;
+    }
+    return questions;
   } catch (error) {
     console.error("Задание не сработало", error.message);
     return null;
