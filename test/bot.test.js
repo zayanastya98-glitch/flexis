@@ -679,6 +679,28 @@ test("Настя может ответить студенту через бот�
   assert.match(lastText(sent), /ещё не вошёл/);
 });
 
+test("/stats показывает активность студентов", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await say(env, TEACHER, "/addstudent Анна");
+
+  await say(env, STUDENT, "➕ Добавить чанк");
+  await say(env, STUDENT, "look forward to\nmake sense");
+  const [chunk] = await db.chunks(sonya.id);
+  await press(env, STUDENT, `know:${chunk.id}`);
+
+  await say(env, TEACHER, "/stats");
+  const text = lastText(sent);
+  assert.match(text, /Анна: не подключён\(а\)/);
+  assert.match(text, /Соня: подключён\(а\), последний вход: /);
+  assert.match(text, /чанков 3 \(из них добавлено сами 2\) · карточек 1 · ответов 0/);
+
+  // Студенты эту команду не видят.
+  const count = sent.length;
+  await say(env, STUDENT, "/stats");
+  assert.ok(sent.slice(count).every((item) => !item.body.text?.includes("Анна:")));
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>

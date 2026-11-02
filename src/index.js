@@ -51,6 +51,7 @@ const TEACHER_HELP =
   "/add — добавить лексику\n" +
   "/note — отправить заметку с урока\n" +
   "/reply — написать студенту от твоего имени\n" +
+  "/stats — активность студентов\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
   "/list — посмотреть лексику студента\n" +
@@ -62,6 +63,7 @@ const TEACHER_COMMANDS = [
   { command: "add", description: "Добавить лексику" },
   { command: "note", description: "Отправить заметку с урока" },
   { command: "reply", description: "Написать студенту" },
+  { command: "stats", description: "Активность студентов" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
@@ -130,6 +132,34 @@ function send(env, chatId, text, replyMarkup, entities) {
 // Выделяет чанк жирным. Спецсимволы в тексте при этом не ломают сообщение.
 function boldChunk(chunk, offset = 0) {
   return [{ type: "bold", offset, length: chunk.text.length }];
+}
+
+function formatDateTime(env, iso) {
+  return new Date(iso).toLocaleString("ru-RU", {
+    timeZone: env.TIMEZONE || "Europe/Istanbul",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function statsText(env, db) {
+  const rows = await db.stats();
+  if (!rows.length) return "Студентов пока нет: /addstudent Имя";
+  const blocks = rows.map((row) => {
+    const status = !row.telegram_id
+      ? "не подключён(а)"
+      : row.last_seen
+        ? `подключён(а), последний вход: ${formatDateTime(env, row.last_seen)}`
+        : "подключён(а), ещё не заходил(а)";
+    return (
+      `${row.name}: ${status}\n` +
+      `чанков ${row.chunks} (из них добавлено сами ${row.own_chunks}) · ` +
+      `карточек ${row.cards_done} · ответов ${row.answers}`
+    );
+  });
+  return blocks.join("\n\n").slice(0, 4000);
 }
 
 function formatDate(isoDate) {
@@ -312,6 +342,8 @@ async function onCommand(env, db, message, command, argument) {
       "Чей прогресс обнулить?",
       await studentPicker(db, "resetfor", false),
     );
+  } else if (command === "stats") {
+    await send(env, chatId, await statsText(env, db));
   } else if (command === "reply") {
     if (!(await db.students()).length) {
       await send(env, chatId, "Студентов пока нет: /addstudent Имя");
@@ -521,7 +553,10 @@ async function saveStudentChunks(env, db, message, student, text) {
   }
   const { fresh, duplicates, similar } = compareChunks(await db.chunks(student.id), rows);
   await db.clearState(message.from.id);
-  if (fresh.length) await db.addChunks([student.id], fresh, clock(env).date);
+  if (fresh.length) {
+    await db.addChunks([student.id], fresh, clock(env).date);
+    await db.increment(student.id, "own_chunks", fresh.length);
+  }
   const reply = [];
   if (fresh.length) {
     reply.push(`Добавлено чанков: ${fresh.length}. Они уже в карточках! ✅`);
@@ -591,6 +626,8 @@ async function onText(env, db, message) {
     }
     return;
   }
+
+  await db.touch(student.id, new Date().toISOString());
 
   if (text === CARDS) {
     await db.clearState(userId);
@@ -766,6 +803,8 @@ async function onButton(env, db, query) {
   const student = await db.studentByTelegram(userId);
   if (!student) return;
 
+  await db.touch(student.id, new Date().toISOString());
+
   if (action === "show") {
     const chunk = await db.chunk(id, student.id);
     if (chunk) {
@@ -783,6 +822,7 @@ async function onButton(env, db, query) {
     }
   } else if (action === "know" || action === "again") {
     await db.review(id, student.id, action === "know", clock(env).date);
+    await db.increment(student.id, "cards_done");
     await telegram(env, "editMessageReplyMarkup", {
       chat_id: chatId,
       message_id: messageId,

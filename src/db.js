@@ -44,6 +44,12 @@ const SCHEMA = [
     lesson_date TEXT NOT NULL,
     text TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS student_stats (
+    student_id INTEGER PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
+    last_seen TEXT,
+    own_chunks INTEGER NOT NULL DEFAULT 0,
+    cards_done INTEGER NOT NULL DEFAULT 0
+  )`,
   `CREATE TABLE IF NOT EXISTS user_state (
     telegram_id INTEGER PRIMARY KEY,
     data TEXT NOT NULL
@@ -295,6 +301,7 @@ export class Database {
           "UPDATE chunks SET box = 1, due_date = ?, last_sent = NULL WHERE student_id = ?",
         )
         .bind(today, studentId),
+      this.d1.prepare("UPDATE student_stats SET cards_done = 0 WHERE student_id = ?").bind(studentId),
       this.d1.prepare("DELETE FROM answers WHERE student_id = ?").bind(studentId),
       this.d1
         .prepare(
@@ -303,6 +310,41 @@ export class Database {
         )
         .bind(studentId),
     ]);
+  }
+
+  // ---------- Активность ----------
+  touch(studentId, when) {
+    return this.run(
+      `INSERT INTO student_stats (student_id, last_seen) VALUES (?, ?)
+       ON CONFLICT (student_id) DO UPDATE SET last_seen = excluded.last_seen`,
+      studentId,
+      when,
+    );
+  }
+
+  increment(studentId, column, by = 1) {
+    if (!["own_chunks", "cards_done"].includes(column)) {
+      throw new Error(`Unknown stat: ${column}`);
+    }
+    return this.run(
+      `INSERT INTO student_stats (student_id, ${column}) VALUES (?, ?)
+       ON CONFLICT (student_id) DO UPDATE SET ${column} = ${column} + excluded.${column}`,
+      studentId,
+      by,
+    );
+  }
+
+  stats() {
+    return this.many(
+      `SELECT s.id, s.name, s.telegram_id, st.last_seen,
+              COALESCE(st.own_chunks, 0) AS own_chunks,
+              COALESCE(st.cards_done, 0) AS cards_done,
+              (SELECT COUNT(*) FROM chunks c WHERE c.student_id = s.id) AS chunks,
+              (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id) AS answers
+       FROM students s
+       LEFT JOIN student_stats st ON st.student_id = s.id
+       ORDER BY s.name`,
+    );
   }
 
   // ---------- Заметки с уроков ----------
