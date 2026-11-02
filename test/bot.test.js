@@ -222,7 +222,7 @@ test("полный сценарий: преподаватель и студен�
   assert.ok(sent.at(-1).body.reply_markup.keyboard);
 
   await say(env, STUDENT, "🃏 Карточки");
-  assert.equal(lastText(sent), "Карточка 1 из 10\n\nused to");
+  assert.equal(lastText(sent), "1/10\n\nused to");
   assert.equal(sent.at(-1).body.entities[0].length, "used to".length);
   const show = sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data;
   await press(env, STUDENT, show);
@@ -428,14 +428,14 @@ test("карточки идут сессиями по 10 со счётчиком
   const messages = () => sent.filter((item) => item.method === "sendMessage" || item.method === "editMessageText");
   const last = () => messages().at(-1).body;
   for (let n = 1; n <= 10; n++) {
-    assert.match(last().text, new RegExp(`Карточка ${n} из 10`));
+    assert.match(last().text, new RegExp(`^${n}/10`));
     await press(env, STUDENT, last().reply_markup.inline_keyboard[0][0].callback_data);
     await press(env, STUDENT, last().reply_markup.inline_keyboard[0][1].callback_data);
   }
   // После десяти карточек бот спрашивает, продолжать или закончить.
   assert.match(lastText(sent), /Практиковать ещё или закончить/);
   await press(env, STUDENT, "cardsmore");
-  assert.match(lastText(sent), /Карточка 1 из 10/);
+  assert.match(lastText(sent), /^1\/10/);
 });
 
 test("преподаватель переименовывает и удаляет студента", async () => {
@@ -598,7 +598,7 @@ test("карточка показывается на русском или на 
   try {
     Math.random = () => 0.1;
     await say(env, STUDENT, "🃏 Карточки");
-    assert.equal(lastText(sent), "Карточка 1 из 10\n\nКак сказать по-английски?\n\nраньше");
+    assert.equal(lastText(sent), "1/10\n\nКак сказать по-английски?\n\nраньше");
     const [bold] = sent.at(-1).body.entities;
     assert.equal(lastText(sent).slice(bold.offset, bold.offset + bold.length), "раньше");
     const show = sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data;
@@ -607,14 +607,14 @@ test("карточка показывается на русском или на 
 
     Math.random = () => 0.9;
     await say(env, STUDENT, "🃏 Карточки");
-    assert.equal(lastText(sent), "Карточка 1 из 10\n\nused to");
+    assert.equal(lastText(sent), "1/10\n\nused to");
 
     // Без перевода показывать по-русски нечего.
     await db.deleteChunks((await db.chunks(sonya.id)).map((row) => row.id));
     await db.addChunks([sonya.id], [["make sense", "", "", ""]], DAY);
     Math.random = () => 0.1;
     await say(env, STUDENT, "🃏 Карточки");
-    assert.equal(lastText(sent), "Карточка 1 из 10\n\nmake sense");
+    assert.equal(lastText(sent), "1/10\n\nmake sense");
   } finally {
     Math.random = originalRandom;
   }

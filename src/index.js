@@ -610,7 +610,7 @@ async function sendCard(env, db, chatId, student, number = 1) {
     await send(env, chatId, "На сегодня карточек нет. Отличная работа! 🎉");
     return;
   }
-  const counter = `Карточка ${number} из ${CARD_SESSION}\n\n`;
+  const counter = `${number}/${CARD_SESSION}\n\n`;
   const keyboard = { inline_keyboard: [[inline("Показать", `show:${chunk.id}:${number}`)]] };
   // Без перевода карточка всегда показывается на английском.
   if (chunk.translation && Math.random() < 0.5) {
@@ -1100,7 +1100,7 @@ async function onButton(env, db, query) {
     const chunk = await db.chunk(id, student.id);
     if (chunk) {
       const number = Number(extra) || 0;
-      const counter = number ? `Карточка ${number} из ${CARD_SESSION}\n\n` : "";
+      const counter = number ? `${number}/${CARD_SESSION}\n\n` : "";
       await telegram(env, "editMessageText", {
         chat_id: chatId,
         message_id: messageId,
