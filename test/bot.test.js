@@ -213,7 +213,8 @@ test("полный сценарий: преподаватель и студен�
   assert.match(lastText(sent), /Не нашёл/);
 
   await say(env, STUDENT, code);
-  assert.match(lastText(sent), /Привет, Анна Мария/);
+  assert.match(lastText(sent), /^Привеет :\)/);
+  assert.ok(sent.at(-1).body.reply_markup.keyboard);
 
   await say(env, STUDENT, "🃏 Карточки");
   assert.equal(lastText(sent), "used to");
