@@ -1214,3 +1214,42 @@ test("студентка получает задание, после того к
   await say(env, STUDENT, "✍️ Закончи фразу");
   assert.match(lastText(sent), /The best decision I made was\.\.\./);
 });
+
+test("/frames redo сбрасывает только начала, которые написал Claude", async () => {
+  const { env, sent } = await environment();
+  const db = new Database(env.DB);
+  await say(env, TEACHER, "/addstudent Соня");
+  const [sonya] = await db.students();
+  await db.addChunks(
+    [sonya.id],
+    [["make a decision", "", "", ""], ["used to", "", "", "I used to..."]],
+    DAY,
+  );
+  env.ANTHROPIC_API_KEY = "key";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (!url.startsWith("https://api.anthropic.com")) return originalFetch(url, options);
+    const answer = [{ chunk: "make a decision", frame: "The best decision I've ever made was..." }];
+    return new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
+    );
+  };
+  await say(env, TEACHER, "/frames");
+  globalThis.fetch = originalFetch;
+
+  env.ANTHROPIC_API_KEY = "key";
+  globalThis.fetch = async (url, options) => {
+    if (!url.startsWith("https://api.anthropic.com")) return originalFetch(url, options);
+    const answer = [{ chunk: "make a decision", frame: "Looking back, my best choice was..." }];
+    return new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
+    );
+  };
+  await say(env, TEACHER, "/frames redo");
+  globalThis.fetch = originalFetch;
+
+  const rows = await db.chunks(sonya.id);
+  assert.equal(rows.find((row) => row.text === "make a decision").frame, "Looking back, my best choice was...");
+  assert.equal(rows.find((row) => row.text === "used to").frame, "I used to...", "написанное вручную не трогаем");
+  assert.match(lastText(sent), /Готово|Осталось/);
+});

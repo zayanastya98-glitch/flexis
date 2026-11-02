@@ -80,6 +80,10 @@ const SCHEMA = [
     phrase TEXT PRIMARY KEY,
     terms TEXT NOT NULL
   )`,
+  // Чанки, у которых начало фразы написал Claude (а не студентка или преподавательница).
+  `CREATE TABLE IF NOT EXISTS generated_frames (
+    chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE
+  )`,
 ];
 
 function randomCode() {
@@ -449,8 +453,21 @@ export class Database {
   }
 
   // Начало фразы для всех чанков с таким текстом, у которых его ещё нет.
-  setFrame(text, frame) {
-    return this.run("UPDATE chunks SET frame = ? WHERE text = ? AND frame = ''", frame, text);
+  async setFrame(text, frame) {
+    await this.run("UPDATE chunks SET frame = ? WHERE text = ? AND frame = ''", frame, text);
+    await this.run(
+      "INSERT OR IGNORE INTO generated_frames (chunk_id) SELECT id FROM chunks WHERE text = ? AND frame = ?",
+      text,
+      frame,
+    );
+  }
+
+  // Сбрасывает только начала, которые написал Claude; написанные вручную остаются.
+  clearGeneratedFrames() {
+    return this.d1.batch([
+      this.d1.prepare("UPDATE chunks SET frame = '' WHERE id IN (SELECT chunk_id FROM generated_frames)"),
+      this.d1.prepare("DELETE FROM generated_frames"),
+    ]);
   }
 
   // Чанки без начала фразы: текст вместе с переводом и примером для контекста.
