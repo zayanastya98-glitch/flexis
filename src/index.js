@@ -15,7 +15,7 @@ const PROGRESS = "🏅 Прогресс";
 const MAX_NOTE_LENGTH = 3900;
 const MAX_DUPES_CHECK = 150;
 // Сколько вопросов идёт подряд в одном квизе.
-const MAX_QUIZ_QUESTIONS = 20;
+const QUIZ_LENGTH = 10;
 // Защита от случайных расходов на API.
 const MAX_AI_CHECKS_PER_DAY = 30;
 // Сколько чанков студент может добавить одним сообщением.
@@ -197,7 +197,7 @@ async function progressText(db, student) {
 }
 
 // Квиз: чанк на русском, четыре варианта на английском из лексики студента.
-async function sendQuiz(env, db, chatId, student, count = 0) {
+async function sendQuiz(env, db, chatId, student, count = 0, progress = { score: 0, mistakes: [] }) {
   const all = await db.chunks(student.id);
   const texts = [...new Set(all.map((chunk) => chunk.text))];
   const withTranslation = all.filter((chunk) => chunk.translation);
@@ -225,8 +225,29 @@ async function sendQuiz(env, db, chatId, student, count = 0) {
   // Пример покажем сообщением сразу после ответа, поэтому запоминаем его здесь.
   await db.setState(student.telegram_id, {
     quiz: count,
-    poll: { id: result.poll.id, text: correct.text, example: correct.example || "" },
+    score: progress.score,
+    mistakes: progress.mistakes,
+    poll: {
+      id: result.poll.id,
+      text: correct.text,
+      translation: correct.translation,
+      example: correct.example || "",
+      options,
+    },
   });
+}
+
+// Итог квиза: сколько верно и какие чанки студент не выбрал.
+function quizSummary(score, mistakes) {
+  const title = `🧩 Квиз окончен: верно ${score} из ${QUIZ_LENGTH}.`;
+  if (!mistakes.length) {
+    return { text: `${title}\n\nБез ошибок! 🎉`, entities: boldChunk({ text: title }) };
+  }
+  const lines = mistakes.map((m) => `• ${m.text} — ${m.translation}\n  Ты выбрала: ${m.chosen}`);
+  return {
+    text: `${title}\n\nОшибки:\n${lines.join("\n")}`,
+    entities: boldChunk({ text: title }),
+  };
 }
 
 // Сообщение после ответа: верно или нет, и пример с выделенным чанком.
@@ -261,16 +282,28 @@ async function onPollAnswer(env, db, answer) {
   // Квиз продолжается сам, пока студентка не выйдет из него кнопкой меню.
   const state = await db.getState(student.telegram_id);
   if (typeof state.quiz !== "number") return;
+  const progress = { score: state.score || 0, mistakes: state.mistakes || [] };
   if (state.poll && state.poll.id === answer.poll_id) {
     await sendVerdict(env, student.telegram_id, state.poll, correct);
+    if (correct) {
+      progress.score += 1;
+    } else {
+      progress.mistakes.push({
+        text: state.poll.text,
+        translation: state.poll.translation,
+        chosen: state.poll.options[answer.option_ids[0]],
+      });
+    }
   }
-  if (state.quiz + 1 >= MAX_QUIZ_QUESTIONS) {
+  const answered = state.quiz + 1;
+  if (answered >= QUIZ_LENGTH) {
     await db.clearState(student.telegram_id);
-    await send(env, student.telegram_id, "Квиз на сегодня окончен. Отличная работа! 🎉");
+    const summary = quizSummary(progress.score, progress.mistakes);
+    await send(env, student.telegram_id, summary.text, null, summary.entities);
     return;
   }
   try {
-    await sendQuiz(env, db, student.telegram_id, student, state.quiz + 1);
+    await sendQuiz(env, db, student.telegram_id, student, answered, progress);
   } catch (error) {
     console.error("Квиз не продолжился", error.message);
     await send(env, student.telegram_id, "Не получилось открыть следующий вопрос. Нажми 🧩 Квиз, чтобы продолжить.");
@@ -778,7 +811,7 @@ async function onText(env, db, message) {
     });
   } else if (text === QUIZ) {
     await db.clearState(userId);
-    await send(env, chatId, "Квиз запущен. Чтобы остановиться, нажми любую кнопку меню.");
+    await send(env, chatId, "Квиз из 10 вопросов запущен. Чтобы остановиться раньше, нажми любую кнопку меню.");
     await sendQuiz(env, db, chatId, student);
   } else if (text === PROGRESS) {
     await db.clearState(userId);

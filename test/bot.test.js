@@ -750,6 +750,41 @@ test("квиз-опрос проверяет знание и считается 
   assert.match(lastText(sent), /Серия: 1 дн\. \(рекорд: 1\)/);
 });
 
+test("квиз из 10 вопросов заканчивается итогом с ошибками", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    [
+      ["catch a bus", "успеть на автобус", "", ""],
+      ["look forward to", "ждать с нетерпением", "", ""],
+      ["feel anxious", "тревожиться", "", ""],
+      ["pass the time", "скоротать время", "", ""],
+    ],
+    DAY,
+  );
+  await say(env, STUDENT, "🧩 Квиз");
+  const polls = () => sent.filter((item) => item.method === "sendPoll");
+  let missed = "";
+  for (let n = 0; n < 10; n++) {
+    const poll = polls()[n];
+    const pollId = `poll${sent.indexOf(poll) + 1}`;
+    const correct = poll.body.correct_option_id;
+    // На четвёртом вопросе студентка ошибается.
+    const option = n === 3 ? (correct === 0 ? 1 : 0) : correct;
+    if (n === 3) missed = poll.body.options[correct].text;
+    await post(env, { poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [option] } });
+  }
+  assert.equal(polls().length, 10);
+  const summary = lastText(sent);
+  assert.match(summary, /верно 9 из 10/);
+  assert.ok(summary.includes(missed));
+  assert.match(summary, /Ты выбрала:/);
+  // После итога квиз не продолжается.
+  await post(env, { poll_answer: { poll_id: "poll999", user: { id: STUDENT }, option_ids: [0] } });
+  assert.equal(polls().length, 10);
+});
+
 test("квиз останавливается кнопкой меню", async () => {
   const { env, sent } = await environment();
   const { db, sonya } = await studentWithFrame(env);
