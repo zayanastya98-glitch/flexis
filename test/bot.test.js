@@ -1271,3 +1271,15 @@ test("/preview показывает учительнице задание сту
   await press(env, STUDENT, `previewfor:${sonya.id}`);
   assert.ok(!sent.some((item) => item.body.text?.includes("Задание ученика")), "студентка не может открыть чужие задания");
 });
+
+test("в задании фраза выделена жирным, а пример курсивом", async () => {
+  const { env, sent } = await environment();
+  await studentWithFrame(env);
+  await say(env, STUDENT, "✍️ Закончи фразу");
+  const message = sent.find((item) => item.body.text?.startsWith("Продолжи фразу"));
+  const { text, entities } = message.body;
+  const bold = entities.find((entity) => entity.type === "bold");
+  const italic = entities.find((entity) => entity.type === "italic");
+  assert.equal(text.slice(bold.offset, bold.offset + bold.length), "I used to...");
+  assert.match(text.slice(italic.offset, italic.offset + italic.length), /ты видишь: I used to\.\.\./);
+});

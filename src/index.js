@@ -27,10 +27,22 @@ const CARD_SESSION = 10;
 const MAX_AI_CHECKS_PER_DAY = 30;
 // Сколько чанков студент может добавить одним сообщением.
 const MAX_STUDENT_CHUNKS = 20;
-// Инструкция к заданию «Закончи фразу»: что делать и пример.
-const FRAME_INTRO =
-  "Продолжи фразу. Это может быть про тебя, твоё мнение или логическое продолжение.\n\n" +
-  "Пример:\nты видишь: I used to...\nты продолжаешь: I used to live in a small town.";
+// Задание «Продолжи фразу»: инструкция и пример курсивом, сама фраза жирным.
+function frameTask(frame, prefix = "") {
+  const intro =
+    "Продолжи фразу. Это может быть про тебя, твоё мнение или логическое продолжение.\n\nПример:\n";
+  const example =
+    "ты видишь: I used to...\nты продолжаешь: I used to live in a small town.";
+  const entities = [];
+  let text = prefix;
+  text += intro;
+  entities.push({ type: "italic", offset: text.length, length: example.length });
+  text += example;
+  text += "\n\n";
+  entities.push({ type: "bold", offset: text.length, length: frame.length });
+  text += frame;
+  return { text, entities };
+}
 
 const MENU = {
   keyboard: [
@@ -786,9 +798,14 @@ async function sendCard(env, db, chatId, student, number = 1) {
 
 async function askFrame(env, db, chatId, userId, chunk) {
   await db.setState(userId, { awaiting: "frame", frame: chunk.frame });
-  await send(env, chatId, `${FRAME_INTRO}\n\n${chunk.frame}`, {
-    inline_keyboard: [[inline("➡️ Следующая фраза", "nextframe")]],
-  });
+  const task = frameTask(chunk.frame);
+  await send(
+    env,
+    chatId,
+    task.text,
+    { inline_keyboard: [[inline("➡️ Следующая фраза", "nextframe")]] },
+    task.entities,
+  );
 }
 
 // Следующая случайная фраза с заданием; false, если заданий больше нет.
@@ -1171,7 +1188,8 @@ async function onButton(env, db, query) {
         await send(env, chatId, `У ученика ${target.name} пока нет заданий «Закончи фразу».`);
         return;
       }
-      await send(env, chatId, `${head}${FRAME_INTRO}\n\n${chunk.frame}`, next);
+      const task = frameTask(chunk.frame, head);
+      await send(env, chatId, task.text, next, task.entities);
       return;
     }
     if (action === "previewcard") {
@@ -1530,11 +1548,13 @@ async function sendNotifications(env, db) {
       if (student.notify_frame) {
         const chunk = await db.randomFrame(student.id);
         if (chunk) {
+          const task = frameTask(chunk.frame, "Задание дня\n\n");
           await send(
             env,
             chatId,
-            `Задание дня: продолжи фразу\n\n${FRAME_INTRO}\n\n${chunk.frame}`,
+            task.text,
             { inline_keyboard: [[inline("Ответить", `frame:${chunk.id}`)]] },
+            task.entities,
           );
         }
       }
