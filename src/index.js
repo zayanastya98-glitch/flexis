@@ -196,32 +196,81 @@ async function progressText(db, student) {
   ].join("\n");
 }
 
-// Квиз: чанк на русском, четыре варианта на английском из лексики студента.
+const PREPOSITIONS = ["to", "on", "in", "at", "for", "of", "with", "about", "from"];
+
+// Предлог в конце чанка, например «look forward to» → «to».
+function prepositionOf(text) {
+  const words = text.trim().split(/\s+/);
+  if (words.length < 2) return null;
+  const last = words[words.length - 1].toLowerCase();
+  return PREPOSITIONS.includes(last) ? last : null;
+}
+
+// Пример с пропуском вместо чанка: «I look forward to it.» → «I ___ it.».
+function exampleWithGap(chunk) {
+  if (!chunk.example) return null;
+  const at = chunk.example.toLowerCase().indexOf(chunk.text.toLowerCase());
+  if (at < 0) return null;
+  return chunk.example.slice(0, at) + "___" + chunk.example.slice(at + chunk.text.length);
+}
+
+// Четыре варианта: правильный ответ и три другие из лексики студента.
+function textOptions(answer, texts) {
+  const others = shuffle(texts.filter((text) => text !== answer)).slice(0, 3);
+  return shuffle([answer, ...others]);
+}
+
+// Квиз: четыре типа вопросов, тип и чанк выбираются случайно из подходящих.
 async function sendQuiz(env, db, chatId, student, count = 0, progress = { score: 0, mistakes: [] }) {
   const all = await db.chunks(student.id);
   const texts = [...new Set(all.map((chunk) => chunk.text))];
-  const withTranslation = all.filter((chunk) => chunk.translation);
-  if (!withTranslation.length || texts.length < 4) {
+  const pools = {
+    translation: all.filter((chunk) => chunk.translation),
+    gap: all.filter((chunk) => exampleWithGap(chunk)),
+    preposition: all.filter((chunk) => prepositionOf(chunk.text)),
+  };
+  const kinds = Object.keys(pools).filter((kind) => pools[kind].length);
+  if (!kinds.length || texts.length < 4) {
     await db.clearState(student.telegram_id);
     await send(
       env,
       chatId,
-      "Для квиза нужно минимум 4 разных чанка и хотя бы один с переводом. Добавь лексику.",
+      "Для квиза нужно минимум 4 разных чанка и хотя бы один с переводом, примером или предлогом в конце. Добавь лексику.",
     );
     return;
   }
-  const correct = withTranslation[Math.floor(Math.random() * withTranslation.length)];
-  const others = shuffle(texts.filter((text) => text !== correct.text)).slice(0, 3);
-  const options = shuffle([correct.text, ...others]);
+  const kind = kinds[Math.floor(Math.random() * kinds.length)];
+  const chunk = pools[kind][Math.floor(Math.random() * pools[kind].length)];
+
+  let question;
+  let answer;
+  let options;
+  if (kind === "translation") {
+    question = `Как сказать по-английски: «${chunk.translation}»?`;
+    answer = chunk.text;
+    options = textOptions(answer, texts);
+  } else if (kind === "gap") {
+    question = `Какой чанк пропущен? «${exampleWithGap(chunk)}»`;
+    answer = chunk.text;
+    options = textOptions(answer, texts);
+  } else {
+    const preposition = prepositionOf(chunk.text);
+    const base = chunk.text.trim().split(/\s+/).slice(0, -1).join(" ");
+    question = `Какой предлог пропущен? «${base} ___»`;
+    answer = preposition;
+    const others = shuffle(PREPOSITIONS.filter((word) => word !== preposition)).slice(0, 3);
+    options = shuffle([preposition, ...others]);
+  }
+
   const result = await telegram(env, "sendPoll", {
     chat_id: chatId,
-    question: `Как сказать по-английски: «${correct.translation}»?`.slice(0, 300),
+    question: question.slice(0, 300),
     options: options.map((text) => ({ text: text.slice(0, 100) })),
     type: "quiz",
-    correct_option_id: options.indexOf(correct.text),
+    correct_option_id: options.indexOf(answer),
     is_anonymous: false,
   });
-  await db.saveQuiz(result.poll.id, student.id, options.indexOf(correct.text));
+  await db.saveQuiz(result.poll.id, student.id, options.indexOf(answer));
   // Пример покажем сообщением сразу после ответа, поэтому запоминаем его здесь.
   await db.setState(student.telegram_id, {
     quiz: count,
@@ -229,9 +278,10 @@ async function sendQuiz(env, db, chatId, student, count = 0, progress = { score:
     mistakes: progress.mistakes,
     poll: {
       id: result.poll.id,
-      text: correct.text,
-      translation: correct.translation,
-      example: correct.example || "",
+      text: chunk.text,
+      answer,
+      translation: chunk.translation || "",
+      example: chunk.example || "",
       options,
     },
   });
@@ -243,7 +293,9 @@ function quizSummary(score, mistakes) {
   if (!mistakes.length) {
     return { text: `${title}\n\nБез ошибок! 🎉`, entities: boldChunk({ text: title }) };
   }
-  const lines = mistakes.map((m) => `• ${m.text} — ${m.translation}\n  Ты выбрала: ${m.chosen}`);
+  const lines = mistakes.map(
+    (m) => `• ${m.text}${m.translation ? ` — ${m.translation}` : ""}\n  Ты выбрала: ${m.chosen}, правильно: ${m.answer}`,
+  );
   return {
     text: `${title}\n\nОшибки:\n${lines.join("\n")}`,
     entities: boldChunk({ text: title }),
@@ -252,8 +304,8 @@ function quizSummary(score, mistakes) {
 
 // Сообщение после ответа: верно или нет, и пример с выделенным чанком.
 async function sendVerdict(env, chatId, poll, correct) {
-  const head = correct ? "✅ Верно!" : `❌ Не совсем. Правильно: ${poll.text}`;
-  const entities = correct ? [] : [{ type: "bold", offset: head.length - poll.text.length, length: poll.text.length }];
+  const head = correct ? "✅ Верно!" : `❌ Не совсем. Правильно: ${poll.answer}`;
+  const entities = correct ? [] : [{ type: "bold", offset: head.length - poll.answer.length, length: poll.answer.length }];
   let text = head;
   if (poll.example) {
     const label = "\n\nПример: ";
@@ -292,6 +344,7 @@ async function onPollAnswer(env, db, answer) {
         text: state.poll.text,
         translation: state.poll.translation,
         chosen: state.poll.options[answer.option_ids[0]],
+        answer: state.poll.answer,
       });
     }
   }

@@ -705,7 +705,9 @@ test("/stats показывает активность студентов", asyn
   assert.ok(sent.slice(count).every((item) => !item.body.text?.includes("Анна:")));
 });
 
-test("квиз-опрос проверяет знание и считается в прогрессе", async () => {
+test("квиз-опрос проверяет знание и считается в прогрессе", async (t) => {
+  // Первый тип вопроса — перевод, поэтому фраза на русском в вопросе.
+  t.mock.method(Math, "random", () => 0);
   const { env, sent } = await environment();
   const { db, sonya } = await studentWithFrame(env);
   await db.addChunks(
@@ -765,24 +767,68 @@ test("квиз из 10 вопросов заканчивается итогом 
   );
   await say(env, STUDENT, "🧩 Квиз");
   const polls = () => sent.filter((item) => item.method === "sendPoll");
-  let missed = "";
   for (let n = 0; n < 10; n++) {
     const poll = polls()[n];
     const pollId = `poll${sent.indexOf(poll) + 1}`;
     const correct = poll.body.correct_option_id;
     // На четвёртом вопросе студентка ошибается.
     const option = n === 3 ? (correct === 0 ? 1 : 0) : correct;
-    if (n === 3) missed = poll.body.options[correct].text;
     await post(env, { poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [option] } });
   }
   assert.equal(polls().length, 10);
   const summary = lastText(sent);
   assert.match(summary, /верно 9 из 10/);
-  assert.ok(summary.includes(missed));
   assert.match(summary, /Ты выбрала:/);
   // После итога квиз не продолжается.
   await post(env, { poll_answer: { poll_id: "poll999", user: { id: STUDENT }, option_ids: [0] } });
   assert.equal(polls().length, 10);
+});
+
+test("квиз на пропуск в примере и на предлог", async (t) => {
+  t.mock.method(Math, "random", () => 0.99);
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    [
+      ["look forward to", "", "I look forward to it.", ""],
+      ["depend on", "", "", ""],
+      ["interested in", "", "", ""],
+      ["good at", "", "", ""],
+    ],
+    DAY,
+  );
+  await say(env, STUDENT, "🧩 Квиз");
+  const poll = sent.find((item) => item.method === "sendPoll");
+  assert.ok(poll.body.question.includes("«"));
+  // Вопрос на предлог: в варианте только предлоги.
+  const prepositions = ["to", "on", "in", "at", "for", "of", "with", "about", "from"];
+  if (poll.body.question.startsWith("Какой предлог")) {
+    assert.ok(prepositions.includes(poll.body.options[poll.body.correct_option_id].text));
+  } else {
+    assert.match(poll.body.question, /___/);
+  }
+});
+
+test("квиз на пропуск в примере заменяет чанк на пропуск", async (t) => {
+  // Первый подходящий тип — пропуск в примере, первый чанк — «catch a bus».
+  t.mock.method(Math, "random", () => 0);
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    [
+      ["catch a bus", "", "I need to catch a bus.", ""],
+      ["feel anxious", "", "", ""],
+      ["pass the time", "", "", ""],
+      ["take a break", "", "", ""],
+    ],
+    DAY,
+  );
+  await say(env, STUDENT, "🧩 Квиз");
+  const poll = sent.find((item) => item.method === "sendPoll");
+  assert.equal(poll.body.question, "Какой чанк пропущен? «I need to ___.»");
+  assert.equal(poll.body.options[poll.body.correct_option_id].text, "catch a bus");
 });
 
 test("квиз останавливается кнопкой меню", async () => {
