@@ -462,6 +462,14 @@ export class Database {
     );
   }
 
+  // Сбрасывает все начала фраз, включая написанные вручную: для полной перегенерации.
+  clearAllFrames() {
+    return this.d1.batch([
+      this.d1.prepare("UPDATE chunks SET frame = ''"),
+      this.d1.prepare("DELETE FROM generated_frames"),
+    ]);
+  }
+
   // Сбрасывает только начала, которые написал Claude; написанные вручную остаются.
   clearGeneratedFrames() {
     return this.d1.batch([

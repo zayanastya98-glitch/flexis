@@ -67,6 +67,7 @@ const TEACHER_HELP =
   "/terms — определить термины для кнопок произношения у старой лексики\n" +
   "/frames — написать начала фраз для заданий «Закончи фразу»\n" +
   "/frames redo — пересоздать начала, которые написал Claude\n" +
+  "/frames all — сбросить все начала и создать заново\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
   "/rename — переименовать студента\n" +
@@ -624,7 +625,10 @@ async function onCommand(env, db, message, command, argument) {
       return;
     }
     try {
-      if (argument === "redo") {
+      if (argument === "all") {
+        // Полная перегенерация: сбрасываются и начала, написанные вручную.
+        await db.clearAllFrames();
+      } else if (argument === "redo") {
         // Пересоздаём только начала, которые написал Claude: начала студенток и преподавательницы не трогаем.
         await db.clearGeneratedFrames();
       }
