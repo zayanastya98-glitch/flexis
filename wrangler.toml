@@ -11,4 +11,4 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "flexis-db"
-database_id = "ВСТАВИТЬ_ID_БАЗЫ"
+database_id = "5cbd7da0-9de4-4d05-83f0-677d7e9795fa"
