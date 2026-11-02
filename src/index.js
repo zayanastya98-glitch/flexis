@@ -59,6 +59,8 @@ const TEACHER_HELP =
   "/stats — активность студентов\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
+  "/rename — переименовать студента\n" +
+  "/delstudent — удалить студента со всеми данными\n" +
   "/list — посмотреть лексику студента\n" +
   "/delete 12 15 20 — удалить чанки по номерам\n" +
   "/answers — последние ответы студентов\n" +
@@ -77,6 +79,8 @@ const TEACHER_COMMANDS = [
   { command: "dupes", description: "Найти повторы в лексике" },
   { command: "reset", description: "Обнулить прогресс студента" },
   { command: "logout", description: "Выйти из аккаунта студента" },
+  { command: "rename", description: "Переименовать студента" },
+  { command: "delstudent", description: "Удалить студента" },
   { command: "cancel", description: "Отменить действие" },
   { command: "help", description: "Все команды" },
 ];
@@ -530,6 +534,14 @@ async function onCommand(env, db, message, command, argument) {
       "Чей прогресс обнулить?",
       await studentPicker(db, "resetfor", false),
     );
+  } else if (command === "rename" || command === "delstudent") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Студентов пока нет: /addstudent Имя");
+      return;
+    }
+    const prefix = command === "rename" ? "renamefor" : "delfor";
+    const title = command === "rename" ? "Какого студента переименовать?" : "Какого студента удалить?";
+    await send(env, chatId, title, await studentPicker(db, prefix, false));
   } else if (command === "stats") {
     await send(env, chatId, await statsText(env, db));
   } else if (command === "reply") {
@@ -785,6 +797,24 @@ async function saveTime(env, db, message, student, text) {
   await send(env, message.chat.id, `Готово, буду писать в ${value}.`);
 }
 
+// Новое имя студента: присылает преподаватель после /rename.
+async function saveName(env, db, message, state) {
+  const chatId = message.chat.id;
+  const name = message.text.trim();
+  if (!name || name.length > 50) {
+    await send(env, chatId, "Имя должно быть от 1 до 50 символов. Пришли ещё раз.");
+    return;
+  }
+  const student = await db.student(state.renaming);
+  await db.clearState(message.from.id);
+  if (!student) {
+    await send(env, chatId, "Студент не найден.");
+    return;
+  }
+  await db.renameStudent(student.id, name);
+  await send(env, chatId, `Готово: «${student.name}» → «${name}».`);
+}
+
 async function onText(env, db, message) {
   const text = message.text.trim();
   const chatId = message.chat.id;
@@ -801,6 +831,10 @@ async function onText(env, db, message) {
   }
   if (isTeacher(env, userId) && state.noteFor !== undefined) {
     await saveNote(env, db, message, state);
+    return;
+  }
+  if (isTeacher(env, userId) && state.renaming !== undefined) {
+    await saveName(env, db, message, state);
     return;
   }
 
@@ -920,6 +954,41 @@ async function onButton(env, db, query) {
       chat_id: chatId,
       message_id: messageId,
       text: `Прогресс обнулён: ${student.name}.`,
+    });
+    return;
+  }
+
+  if (action === "renamefor" || action === "delfor" || action === "delyes") {
+    if (!isTeacher(env, userId)) return;
+    const student = await db.student(id);
+    if (!student) return;
+    if (action === "renamefor") {
+      await db.setState(userId, { renaming: student.id });
+      await telegram(env, "editMessageText", {
+        chat_id: chatId,
+        message_id: messageId,
+        text: `Пришли новое имя для студента «${student.name}».`,
+      });
+      return;
+    }
+    if (action === "delfor") {
+      await telegram(env, "editMessageText", {
+        chat_id: chatId,
+        message_id: messageId,
+        text:
+          `Удалить студента «${student.name}»?\n\n` +
+          "Удалятся лексика, ответы, заметки и прогресс. Это нельзя отменить.",
+        reply_markup: {
+          inline_keyboard: [[inline("Да, удалить", `delyes:${student.id}`)]],
+        },
+      });
+      return;
+    }
+    await db.deleteStudent(student.id);
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Студент «${student.name}» удалён.`,
     });
     return;
   }

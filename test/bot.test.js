@@ -416,6 +416,31 @@ test("сброс прогресса оставляет лексику и зам�
   assert.equal((await db.chunks(anna.id))[0].box, 2);
 });
 
+test("преподаватель переименовывает и удаляет студента", async () => {
+  const { env } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks([sonya.id], [["catch a bus", "успеть на автобус", "", ""]], DAY);
+  await db.addNote(sonya.id, DAY, "Заметка");
+
+  // Переименование: сначала выбор студента, потом новое имя.
+  await press(env, 99, `renamefor:${sonya.id}`);
+  assert.notEqual((await db.student(sonya.id)).name, "Сонечка");
+  await say(env, TEACHER, "/rename");
+  await press(env, TEACHER, `renamefor:${sonya.id}`);
+  await say(env, TEACHER, "Сонечка");
+  assert.equal((await db.student(sonya.id)).name, "Сонечка");
+
+  // Удаление только по подтверждению преподавателя.
+  await say(env, TEACHER, "/delstudent");
+  await press(env, TEACHER, `delfor:${sonya.id}`);
+  await press(env, 99, `delyes:${sonya.id}`);
+  assert.ok(await db.student(sonya.id));
+  await press(env, TEACHER, `delyes:${sonya.id}`);
+  assert.ok(!(await db.student(sonya.id)));
+  assert.equal((await db.chunks(sonya.id)).length, 0);
+  assert.equal((await db.notes(sonya.id)).length, 0);
+});
+
 test("меню команд настраивается только для преподавателя", async () => {
   const { env, sent } = await environment();
   await say(env, STUDENT, "/start");

@@ -146,6 +146,23 @@ export class Database {
     return this.one("SELECT * FROM students WHERE id = ?", id);
   }
 
+  renameStudent(id, name) {
+    return this.run("UPDATE students SET name = ? WHERE id = ?", name, id);
+  }
+
+  // Удаляет студента вместе с лексикой, ответами, заметками и прогрессом.
+  deleteStudent(id) {
+    return this.d1.batch([
+      this.d1.prepare("DELETE FROM quiz_polls WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM answers WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM notes WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM chunks WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM student_stats WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM student_progress WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM students WHERE id = ?").bind(id),
+    ]);
+  }
+
   studentByTelegram(telegramId) {
     return this.one("SELECT * FROM students WHERE telegram_id = ?", telegramId);
   }
