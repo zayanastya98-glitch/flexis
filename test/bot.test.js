@@ -773,7 +773,7 @@ test("автопроверка отвечает студенту и Насте",
   assert.equal(requests[0].body.model, "claude-haiku-5-5");
   assert.equal(requests[0].headers["x-api-key"], "test-key");
   assert.match(requests[0].body.messages[0].content, /Sentence frame: I used to\.\.\./);
-  const toStudent = sent.at(-2);
+  const toStudent = sent.find((item) => item.body.text?.includes("Автопроверка"));
   assert.equal(toStudent.body.chat_id, STUDENT);
   assert.match(toStudent.body.text, /Автопроверка[\s\S]*Лучше так/);
   assert.equal(sent.at(-1).body.chat_id, String(TEACHER));
@@ -1114,4 +1114,21 @@ test("/terms классифицирует старую лексику и не п
   assert.equal(anthropicCalls.length, 1, "второй запуск ничего не отправляет");
   assert.match(lastText(sent), /уже классифицированы/);
   globalThis.fetch = originalFetch;
+});
+
+test("после фидбека сразу приходит следующая фраза, и её можно пропустить кнопкой", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks([sonya.id], [["make a decision", "", "", "The best decision I made was..."]], DAY);
+
+  await say(env, STUDENT, "✍️ Закончи фразу");
+  await say(env, STUDENT, "work in an office");
+  const questions = sent.filter((item) => item.body.text?.startsWith("Закончи фразу"));
+  assert.equal(questions.length, 2, "после ответа идёт следующий вопрос");
+  assert.ok(JSON.stringify(questions.at(-1).body.reply_markup).includes("nextframe"));
+
+  sent.length = 0;
+  await press(env, STUDENT, "nextframe");
+  const next = sent.find((item) => item.body.text?.startsWith("Закончи фразу"));
+  assert.ok(next, "кнопка присылает вопрос");
 });

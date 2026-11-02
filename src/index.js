@@ -736,7 +736,17 @@ async function sendCard(env, db, chatId, student, number = 1) {
 
 async function askFrame(env, db, chatId, userId, chunk) {
   await db.setState(userId, { awaiting: "frame", frame: chunk.frame });
-  await send(env, chatId, `Закончи фразу о себе:\n\n${chunk.frame}`);
+  await send(env, chatId, `Закончи фразу о себе:\n\n${chunk.frame}`, {
+    inline_keyboard: [[inline("➡️ Следующая фраза", "nextframe")]],
+  });
+}
+
+// Следующая случайная фраза с заданием; false, если заданий больше нет.
+async function askNextFrame(env, db, chatId, userId, studentId) {
+  const chunk = await db.randomFrame(studentId);
+  if (!chunk) return false;
+  await askFrame(env, db, chatId, userId, chunk);
+  return true;
 }
 
 async function saveVocabulary(env, db, message, state) {
@@ -853,6 +863,7 @@ async function saveAnswer(env, db, message, student, state, text) {
   if (feedback) {
     await send(env, message.chat.id, `🤖 Автопроверка\n\n${feedback}`);
   }
+  await askNextFrame(env, db, message.chat.id, message.from.id, student.id);
   if (env.TEACHER_ID) {
     try {
       const report = `${student.name}\n${state.frame}\n→ ${text}`;
@@ -1340,6 +1351,8 @@ async function onButton(env, db, query) {
     if (chunk && chunk.frame) {
       await askFrame(env, db, chatId, userId, chunk);
     }
+  } else if (action === "nextframe") {
+    await askNextFrame(env, db, chatId, userId, student.id);
   }
 }
 
