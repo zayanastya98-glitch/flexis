@@ -643,7 +643,7 @@ const SESSION_END_TEXT = `Сессия из ${CARD_SESSION} карточек п�
 function sessionEndKeyboard() {
   return {
     inline_keyboard: [
-      [inline("📝 Задание по этим чанкам", "task")],
+      [inline("🗣 Попробовать эти карточки в речи", "task")],
       [inline("🔁 Ещё 10", "cardsmore"), inline("🏁 Закончить", "cardsend")],
     ],
   };
