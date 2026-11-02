@@ -343,6 +343,16 @@ export class Database {
     );
   }
 
+  // Сколько ответов студент дал за последние сутки.
+  async answersLastDay(studentId) {
+    const row = await this.one(
+      `SELECT COUNT(*) AS total FROM answers
+       WHERE student_id = ? AND created_at >= datetime('now', '-1 day')`,
+      studentId,
+    );
+    return row.total;
+  }
+
   recentAnswers(limit = 20) {
     return this.many(
       `SELECT students.name, answers.frame, answers.answer

@@ -1,6 +1,7 @@
 // Telegram-бот для отработки чанков на Cloudflare Workers.
 // Настройка описана в README.md.
 import { Database } from "./db.js";
+import { checkAnswer } from "./feedback.js";
 import { compareChunks, findDuplicatePairs } from "./similar.js";
 
 const CARDS = "🃏 Карточки";
@@ -11,6 +12,8 @@ const NOTES = "📝 Заметки";
 // Запас до лимита Telegram: к тексту добавляется заголовок с датой.
 const MAX_NOTE_LENGTH = 3900;
 const MAX_DUPES_CHECK = 150;
+// Защита от случайных расходов на API.
+const MAX_AI_CHECKS_PER_DAY = 30;
 // Сколько чанков студент может добавить одним сообщением.
 const MAX_STUDENT_CHUNKS = 20;
 const MENU = {
@@ -444,9 +447,21 @@ async function saveAnswer(env, db, message, student, state, text) {
   await db.addAnswer(student.id, state.frame, text);
   await db.clearState(message.from.id);
   await send(env, message.chat.id, "Записано! Настя увидит твой ответ. ✅");
+  let feedback = null;
+  if ((await db.answersLastDay(student.id)) <= MAX_AI_CHECKS_PER_DAY) {
+    feedback = await checkAnswer(env, state.frame, text);
+  }
+  if (feedback) {
+    await send(env, message.chat.id, `🤖 Автопроверка\n\n${feedback}`);
+  }
   if (env.TEACHER_ID) {
     try {
-      await send(env, env.TEACHER_ID, `${student.name}\n${state.frame}\n→ ${text}`);
+      const report = `${student.name}\n${state.frame}\n→ ${text}`;
+      await send(
+        env,
+        env.TEACHER_ID,
+        feedback ? `${report}\n\n🤖 ${feedback}` : report,
+      );
     } catch (error) {
       console.error("Не удалось переслать ответ преподавателю", error.message);
     }
