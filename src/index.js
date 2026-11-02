@@ -34,8 +34,9 @@ const STUDENT_ADD_FORMAT =
   "Например:\n" +
   "used to | раньше | I used to live in Moscow. | I used to...\n\n" +
   "/cancel — отмена.";
-const WELCOME =
-  "Привеет :) Надеюсь, этот бот поможет тебе почаще соприкасаться с лексикой с наших уроков. " +
+const welcome = (name) =>
+  `Привеет, ${name} :) ` +
+  "Надеюсь, этот бот поможет тебе почаще соприкасаться с лексикой с наших уроков. " +
   "Я буду добавлять лексику по мере изучения, но и ты тоже можешь добавлять лексику, " +
   "которая тебе встретилась и тебе хочется ее запомнить.\n\n" +
   "!помним, что мы стараемся работать со словосочетаниями, а не отдельными словами. " +
@@ -518,7 +519,7 @@ async function onText(env, db, message) {
   if (!student) {
     const name = await db.linkStudent(text, userId);
     if (name) {
-      await send(env, chatId, WELCOME, MENU);
+      await send(env, chatId, welcome(name), MENU);
     } else {
       await send(env, chatId, "Такого ID нет. Проверь его или спроси Настю.");
     }
