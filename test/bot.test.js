@@ -732,16 +732,45 @@ test("квиз-опрос проверяет знание и считается 
   const correct = poll.body.correct_option_id;
   // Чужой ответ не засчитывается.
   await post(env, { poll_answer: { poll_id: pollId, user: { id: 99 }, option_ids: [correct] } });
-  // Правильный ответ засчитывается.
+  const polls = () => sent.filter((item) => item.method === "sendPoll").length;
+  assert.equal(polls(), 1);
+  // Правильный ответ засчитывается и квиз сразу присылает следующий вопрос.
   await post(env, { poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [correct] } });
-  // Повторная смена ответа уже не меняет счёт.
+  assert.equal(polls(), 2);
+  // Повторная смена ответа уже не меняет счёт и не запускает новый вопрос.
   await post(env, {
     poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [correct === 0 ? 1 : 0] },
   });
+  assert.equal(polls(), 2);
 
   await say(env, STUDENT, "🏅 Прогресс");
   assert.match(lastText(sent), /Квиз: верно 1 из 1/);
   assert.match(lastText(sent), /Серия: 1 дн\. \(рекорд: 1\)/);
+});
+
+test("квиз останавливается кнопкой меню", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.addChunks(
+    [sonya.id],
+    [
+      ["catch a bus", "успеть на автобус", "I need to catch a bus.", ""],
+      ["look forward to", "ждать с нетерпением", "", ""],
+      ["feel anxious", "тревожиться", "", ""],
+      ["pass the time", "скоротать время", "", ""],
+    ],
+    DAY,
+  );
+  await say(env, STUDENT, "🧩 Квиз");
+  const poll = sent.find((item) => item.method === "sendPoll");
+  const explanation = poll.body.explanation;
+  assert.ok(explanation === undefined || explanation.startsWith("Пример: "));
+  await say(env, STUDENT, "🃏 Карточки");
+  const pollId = `poll${sent.indexOf(poll) + 1}`;
+  await post(env, {
+    poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [poll.body.correct_option_id] },
+  });
+  assert.equal(sent.filter((item) => item.method === "sendPoll").length, 1);
 });
 
 test("квиз без достаточного количества лексики не ломается", async () => {

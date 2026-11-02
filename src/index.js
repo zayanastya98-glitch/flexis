@@ -14,6 +14,8 @@ const PROGRESS = "🏅 Прогресс";
 // Запас до лимита Telegram: к тексту добавляется заголовок с датой.
 const MAX_NOTE_LENGTH = 3900;
 const MAX_DUPES_CHECK = 150;
+// Сколько вопросов идёт подряд в одном квизе.
+const MAX_QUIZ_QUESTIONS = 20;
 // Защита от случайных расходов на API.
 const MAX_AI_CHECKS_PER_DAY = 30;
 // Сколько чанков студент может добавить одним сообщением.
@@ -195,11 +197,12 @@ async function progressText(db, student) {
 }
 
 // Квиз: чанк на русском, четыре варианта на английском из лексики студента.
-async function sendQuiz(env, db, chatId, student) {
+async function sendQuiz(env, db, chatId, student, count = 0) {
   const all = await db.chunks(student.id);
   const texts = [...new Set(all.map((chunk) => chunk.text))];
   const withTranslation = all.filter((chunk) => chunk.translation);
   if (!withTranslation.length || texts.length < 4) {
+    await db.clearState(student.telegram_id);
     await send(
       env,
       chatId,
@@ -217,8 +220,11 @@ async function sendQuiz(env, db, chatId, student) {
     type: "quiz",
     correct_option_id: options.indexOf(correct.text),
     is_anonymous: false,
+    // Telegram показывает это объяснение после ответа.
+    explanation: correct.example ? `Пример: ${correct.example}`.slice(0, 200) : undefined,
   });
   await db.saveQuiz(result.poll.id, student.id, options.indexOf(correct.text));
+  await db.setState(student.telegram_id, { quiz: count });
 }
 
 // Telegram присылает ответ на квиз, мы его засчитываем.
@@ -228,6 +234,16 @@ async function onPollAnswer(env, db, answer) {
   const student = await db.student(quiz.student_id);
   if (!student || student.telegram_id !== answer.user.id) return;
   await db.answerQuiz(answer.poll_id, student.id, answer.option_ids[0] === quiz.correct_index);
+
+  // Квиз продолжается сам, пока студентка не выйдет из него кнопкой меню.
+  const state = await db.getState(student.telegram_id);
+  if (typeof state.quiz !== "number") return;
+  if (state.quiz + 1 >= MAX_QUIZ_QUESTIONS) {
+    await db.clearState(student.telegram_id);
+    await send(env, student.telegram_id, "Квиз на сегодня окончен. Отличная работа! 🎉");
+    return;
+  }
+  await sendQuiz(env, db, student.telegram_id, student, state.quiz + 1);
 }
 
 function formatDate(isoDate) {
@@ -731,6 +747,7 @@ async function onText(env, db, message) {
     });
   } else if (text === QUIZ) {
     await db.clearState(userId);
+    await send(env, chatId, "Квиз запущен. Чтобы остановиться, нажми любую кнопку меню.");
     await sendQuiz(env, db, chatId, student);
   } else if (text === PROGRESS) {
     await db.clearState(userId);
