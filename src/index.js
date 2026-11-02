@@ -67,6 +67,7 @@ const TEACHER_HELP =
   "/terms — определить термины для кнопок произношения у старой лексики\n" +
   "/frames — написать начала фраз для заданий «Закончи фразу»\n" +
   "/frames redo — пересоздать начала, которые написал Claude\n" +
+  "/preview — посмотреть задания любого студента, как их видит студентка\n" +
   "/frames all — сбросить все начала и создать заново\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
@@ -84,6 +85,7 @@ const TEACHER_COMMANDS = [
   { command: "stats", description: "Активность студентов" },
   { command: "terms", description: "Определить термины для старой лексики" },
   { command: "frames", description: "Написать начала фраз для заданий" },
+  { command: "preview", description: "Посмотреть задания студента" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
@@ -619,6 +621,12 @@ async function onCommand(env, db, message, command, argument) {
     const prefix = command === "rename" ? "renamefor" : "delfor";
     const title = command === "rename" ? "Какого студента переименовать?" : "Какого студента удалить?";
     await send(env, chatId, title, await studentPicker(db, prefix, false));
+  } else if (command === "preview") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Студентов пока нет: /addstudent Имя");
+      return;
+    }
+    await send(env, chatId, "Чьи задания посмотреть?", await studentPicker(db, "previewfor", false));
   } else if (command === "frames") {
     if (!env.ANTHROPIC_API_KEY) {
       await send(env, chatId, "Без ключа ANTHROPIC_API_KEY начала фраз не создаются.");
@@ -1130,6 +1138,24 @@ async function onButton(env, db, query) {
   const userId = query.from.id;
   const [action, value, extra] = query.data.split(":");
   const id = Number(value);
+
+  if (action === "previewfor" || action === "previewnext") {
+    if (!isTeacher(env, userId)) return;
+    const target = await db.student(id);
+    if (!target) return;
+    const chunk = await db.randomFrame(target.id);
+    if (!chunk) {
+      await send(env, chatId, `У ученика ${target.name} пока нет заданий «Закончи фразу».`);
+      return;
+    }
+    await send(
+      env,
+      chatId,
+      `Задание ученика ${target.name}, как его видит студентка:\n\nЗакончи фразу о себе:\n\n${chunk.frame}`,
+      { inline_keyboard: [[inline("➡️ Другая", `previewnext:${target.id}`)]] },
+    );
+    return;
+  }
 
   if (action === "dupesfor") {
     if (!isTeacher(env, userId)) return;

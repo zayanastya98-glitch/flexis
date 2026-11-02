@@ -1253,3 +1253,15 @@ test("/frames redo сбрасывает только начала, которы�
   assert.equal(rows.find((row) => row.text === "used to").frame, "I used to...", "написанное вручную не трогаем");
   assert.match(lastText(sent), /Готово|Осталось/);
 });
+
+test("/preview показывает учительнице задание студента, студентке этого не видно", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await say(env, TEACHER, "/preview");
+  await press(env, TEACHER, `previewfor:${sonya.id}`);
+  assert.match(lastText(sent), /как его видит студентка[\s\S]*I used to\.\.\./);
+
+  sent.length = 0;
+  await press(env, STUDENT, `previewfor:${sonya.id}`);
+  assert.ok(!sent.some((item) => item.body.text?.includes("Задание ученика")), "студентка не может открыть чужие задания");
+});
