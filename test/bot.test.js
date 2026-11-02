@@ -6,6 +6,7 @@ import { Database, NOTIFY_BATCH } from "../src/db.js";
 import worker, { parseChunks } from "../src/index.js";
 import { chunkKey, compareChunks, findDuplicatePairs } from "../src/similar.js";
 import { rememberTerms } from "../src/terms.js";
+import { fillFrames } from "../src/frames.js";
 
 const DAY = "2026-11-02";
 const TEACHER = 1;
@@ -1163,4 +1164,24 @@ test("начала фраз создаются при добавлении и к
   const added = (await db.chunks(sonya.id)).find((row) => row.text === "make a decision");
   assert.equal(added.frame, "The best decision I made was...");
   globalThis.fetch = originalFetch;
+});
+
+test("начало фразы принимается с многоточием-символом и другим регистром", async () => {
+  const { env } = await environment();
+  const db = new Database(env.DB);
+  await say(env, TEACHER, "/addstudent Соня");
+  const [sonya] = await db.students();
+  await db.addChunks([sonya.id], [["Wry Smile", "", "", ""]], DAY);
+  env.ANTHROPIC_API_KEY = "key";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (!url.startsWith("https://api.anthropic.com")) return originalFetch(url, options);
+    const answer = [{ chunk: "wry smile", frame: "I gave a wry smile when…" }];
+    return new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
+    );
+  };
+  await fillFrames(env, db, ["Wry Smile"]);
+  globalThis.fetch = originalFetch;
+  assert.equal((await db.chunks(sonya.id))[0].frame, "I gave a wry smile when...");
 });

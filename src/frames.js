@@ -59,9 +59,14 @@ async function generate(env, items) {
     console.error("Начала фраз: нет JSON в ответе");
     return [];
   }
-  // Берём только чанки из запроса и только непустые начала, оканчивающиеся на «...».
+  // Сопоставляем чанки без учёта регистра и пробелов, многоточие приводим к «...».
+  const byKey = new Map(items.map((item) => [item.trim().toLowerCase(), item]));
   return JSON.parse(match[0])
-    .map((item) => ({ chunk: String(item.chunk), frame: String(item.frame || "").trim() }))
-    .filter((item) => items.includes(item.chunk))
-    .filter((item) => item.frame && item.frame.endsWith("..."));
+    .map((item) => {
+      const original = byKey.get(String(item.chunk || "").trim().toLowerCase());
+      let frame = String(item.frame || "").trim().replace(/…$/, "...");
+      if (frame && !frame.endsWith("...")) frame = frame.replace(/\.*$/, "") + "...";
+      return original && frame ? { chunk: original, frame } : null;
+    })
+    .filter(Boolean);
 }
