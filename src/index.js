@@ -348,13 +348,20 @@ async function sendCard(env, db, chatId, student) {
     await send(env, chatId, "На сегодня карточек нет. Отличная работа! 🎉");
     return;
   }
-  await send(
-    env,
-    chatId,
-    chunk.text,
-    { inline_keyboard: [[inline("Показать", `show:${chunk.id}`)]] },
-    boldChunk(chunk),
-  );
+  const keyboard = { inline_keyboard: [[inline("Показать", `show:${chunk.id}`)]] };
+  // Без перевода карточка всегда показывается на английском.
+  if (chunk.translation && Math.random() < 0.5) {
+    const title = "Как сказать по-английски?\n\n";
+    await send(
+      env,
+      chatId,
+      `${title}${chunk.translation}`,
+      keyboard,
+      boldChunk({ text: chunk.translation }, title.length),
+    );
+    return;
+  }
+  await send(env, chatId, chunk.text, keyboard, boldChunk(chunk));
 }
 
 async function askFrame(env, db, chatId, userId, chunk) {

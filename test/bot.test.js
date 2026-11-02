@@ -190,7 +190,8 @@ test("/setup подключает бота и не раскрывает секр
   assert.ok(!(await response.text()).includes(env.BOT_TOKEN));
 });
 
-test("полный сценарий: преподаватель и студент", async () => {
+test("полный сценарий: преподаватель и студент", async (t) => {
+  t.mock.method(Math, "random", () => 0.9);
   const { env, sent } = await environment();
 
   await say(env, TEACHER, "/addstudent Анна Мария");
@@ -533,6 +534,39 @@ test("лексику можно добавить нескольким студе
   assert.equal((await db.chunks(vera.id)).length, 2);
   assert.equal((await db.chunks(gleb.id)).length, 0);
   assert.match(lastText(sent), /Вера: уже есть «catch a bus»/);
+});
+
+test("карточка показывается на русском или на английском", async () => {
+  const { env, sent } = await environment();
+  await say(env, TEACHER, "/addstudent Соня");
+  const db = new Database(env.DB);
+  const [sonya] = await db.students();
+  await say(env, STUDENT, sonya.code);
+  await db.addChunks([sonya.id], [["used to", "раньше", "", ""]], DAY);
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0.1;
+    await say(env, STUDENT, "🃏 Карточки");
+    assert.equal(lastText(sent), "Как сказать по-английски?\n\nраньше");
+    const [bold] = sent.at(-1).body.entities;
+    assert.equal(lastText(sent).slice(bold.offset, bold.offset + bold.length), "раньше");
+    const show = sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data;
+    await press(env, STUDENT, show);
+    assert.match(lastText(sent), /^used to\nПеревод: раньше/);
+
+    Math.random = () => 0.9;
+    await say(env, STUDENT, "🃏 Карточки");
+    assert.equal(lastText(sent), "used to");
+
+    // Без перевода показывать по-русски нечего.
+    await db.deleteChunks((await db.chunks(sonya.id)).map((row) => row.id));
+    await db.addChunks([sonya.id], [["make sense", "", "", ""]], DAY);
+    Math.random = () => 0.1;
+    await say(env, STUDENT, "🃏 Карточки");
+    assert.equal(lastText(sent), "make sense");
+  } finally {
+    Math.random = originalRandom;
+  }
 });
 
 test("ошибка Telegram не ломает ответ сервера", async () => {
