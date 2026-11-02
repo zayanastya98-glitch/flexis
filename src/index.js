@@ -404,14 +404,33 @@ function inline(text, data) {
   return { text, callback_data: data };
 }
 
-// Страница словаря с озвучкой: «look forward to» → .../look-forward-to
-function dictionaryUrl(text) {
-  const slug = text
+const SIMPLE_WORDS = new Set(
+  ("a an the to of in on at for with by from into onto about over up out off be is am are was " +
+    "were been being have has had do does did get got make made take took my your his her its " +
+    "our their it one me him them us i you he she we they this that these those and or but not " +
+    "no so as if than then there here").split(" "),
+);
+
+// Самое «содержательное» слово чанка: «wry smile» → wry, «be rooted in» → rooted.
+function keyWord(text) {
+  const words = text
     .toLowerCase()
-    .replace(/[^a-z\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
-  return `https://dictionary.cambridge.org/dictionary/english/${slug}`;
+    .replace(/[^a-z\s'-]/g, "")
+    .split(/\s+/)
+    .filter((word) => word && !SIMPLE_WORDS.has(word));
+  return words.sort((a, b) => b.length - a.length)[0] || text.toLowerCase();
+}
+
+// Словарь Cambridge по одному слову: определение и произношение.
+function dictionaryUrl(word) {
+  const slug = word.replace(/'/g, "");
+  return `https://dictionary.cambridge.org/dictionary/english/${encodeURIComponent(slug)}`;
+}
+
+// YouGlish по всей фразе: произношение и примеры из видео.
+function youglishUrl(phrase) {
+  const clean = phrase.toLowerCase().replace(/[^a-z\s'-]/g, "").trim();
+  return `https://youglish.com/pronounce/${encodeURIComponent(clean)}/english`;
 }
 
 function notificationsKeyboard(student) {
@@ -1217,7 +1236,10 @@ async function onButton(env, db, query) {
               inline("🔁 Повторить", `again:${id}:${number}`),
               inline("✅ Знаю", `know:${id}:${number}`),
             ],
-            [{ text: "🔊 Произношение", url: dictionaryUrl(chunk.text) }],
+            [
+              { text: `🔊 ${keyWord(chunk.text)}`, url: dictionaryUrl(keyWord(chunk.text)) },
+              { text: "🎬 Фраза", url: youglishUrl(chunk.text) },
+            ],
           ],
         },
       });

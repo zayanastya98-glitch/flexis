@@ -502,9 +502,11 @@ test("после «Показать» есть ссылка на произно�
   await db.addChunks([sonya.id], [["Look forward to!", "", "", ""]], DAY);
   await say(env, STUDENT, "🃏 Карточки");
   await press(env, STUDENT, sent.at(-1).body.reply_markup.inline_keyboard[0][0].callback_data);
-  const pronunciation = sent.filter((item) => item.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard[1][0];
-  assert.equal(pronunciation.text, "🔊 Произношение");
-  assert.match(pronunciation.url, /^https:\/\/dictionary\.cambridge\.org\/dictionary\/english\/[a-z-]+$/);
+  const [word, phrase] = sent.filter((item) => item.method === "editMessageText").at(-1).body.reply_markup.inline_keyboard[1];
+  assert.match(word.text, /^🔊 \w+/);
+  assert.match(word.url, /^https:\/\/dictionary\.cambridge\.org\/dictionary\/english\/[a-z]+$/);
+  assert.equal(phrase.text, "🎬 Фраза");
+  assert.match(phrase.url, /^https:\/\/youglish\.com\/pronounce\/.+\/english$/);
 });
 
 test("преподаватель переименовывает и удаляет студента", async () => {
