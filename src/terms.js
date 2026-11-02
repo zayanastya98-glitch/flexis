@@ -17,18 +17,21 @@ const key = (text) => text.trim().toLowerCase();
 // Классифицирует новые фразы и сохраняет результат. Без ключа ничего не делает:
 // тогда карточка использует простое правило. Ошибки не мешают добавлению чанков.
 export async function rememberTerms(env, db, phrases) {
-  if (!env.ANTHROPIC_API_KEY || !phrases.length) return;
+  if (!env.ANTHROPIC_API_KEY || !phrases.length) return 0;
+  let saved = 0;
   try {
     const known = await db.knownPhrases();
     const missing = [...new Set(phrases.map(key))].filter((phrase) => !known.has(phrase));
     for (let start = 0; start < missing.length; start += BATCH) {
       const items = missing.slice(start, start + BATCH);
-      const saved = await classify(env, items);
-      await db.savePhraseTerms(saved);
+      const rows = await classify(env, items);
+      await db.savePhraseTerms(rows);
+      saved += rows.length;
     }
   } catch (error) {
     console.error("Термины не сохранились", error.message);
   }
+  return saved;
 }
 
 async function classify(env, items) {

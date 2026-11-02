@@ -1084,3 +1084,34 @@ test("карточка берёт сохранённые термины, а не
   const edit = sent.find((item) => item.method === "editMessageText");
   assert.ok(JSON.stringify(edit.body.reply_markup).includes("let-bygones-be-bygones"));
 });
+
+test("/terms классифицирует старую лексику и не повторяет уже сделанное", async () => {
+  const { env, sent } = await environment();
+  const db = new Database(env.DB);
+  await say(env, TEACHER, "/addstudent Соня");
+  const [sonya] = await db.students();
+  await db.addChunks([sonya.id], [["weed out", "", "", ""], ["wry smile", "", "", ""]], DAY);
+  env.ANTHROPIC_API_KEY = "key";
+  const anthropicCalls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (!url.startsWith("https://api.anthropic.com")) return originalFetch(url, options);
+    anthropicCalls.push(JSON.parse(options.body));
+    const answer = [
+      { phrase: "weed out", type: "phrasal", terms: ["weed out"] },
+      { phrase: "wry smile", type: "collocation", terms: ["wry"] },
+    ];
+    return new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
+    );
+  };
+
+  await say(env, TEACHER, "/terms");
+  assert.equal(anthropicCalls.length, 1);
+  assert.match(lastText(sent), /Классифицировано: 2\. Готово/);
+
+  await say(env, TEACHER, "/terms");
+  assert.equal(anthropicCalls.length, 1, "второй запуск ничего не отправляет");
+  assert.match(lastText(sent), /уже классифицированы/);
+  globalThis.fetch = originalFetch;
+});

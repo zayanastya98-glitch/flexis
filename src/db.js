@@ -448,6 +448,12 @@ export class Database {
     return new Set(rows.map((row) => row.phrase));
   }
 
+  // Тексты всех чанков всех студентов без повторов.
+  async chunkTexts() {
+    const rows = await this.many("SELECT DISTINCT text FROM chunks");
+    return rows.map((row) => row.text);
+  }
+
   savePhraseTerms(list) {
     if (!list.length) return Promise.resolve();
     return this.d1.batch(

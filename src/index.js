@@ -6,6 +6,8 @@ import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
 
+const TERMS_RUN_LIMIT = 200;
+
 const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
 const NOTIFICATIONS = "🔔 Уведомления";
@@ -61,6 +63,7 @@ const TEACHER_HELP =
   "/note — отправить заметку с урока\n" +
   "/reply — написать студенту от твоего имени\n" +
   "/stats — активность студентов\n" +
+  "/terms — определить термины для кнопок произношения у старой лексики\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
   "/rename — переименовать студента\n" +
@@ -75,6 +78,7 @@ const TEACHER_COMMANDS = [
   { command: "note", description: "Отправить заметку с урока" },
   { command: "reply", description: "Написать студенту" },
   { command: "stats", description: "Активность студентов" },
+  { command: "terms", description: "Определить термины для старой лексики" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
@@ -610,6 +614,28 @@ async function onCommand(env, db, message, command, argument) {
     const prefix = command === "rename" ? "renamefor" : "delfor";
     const title = command === "rename" ? "Какого студента переименовать?" : "Какого студента удалить?";
     await send(env, chatId, title, await studentPicker(db, prefix, false));
+  } else if (command === "terms") {
+    if (!env.ANTHROPIC_API_KEY) {
+      await send(env, chatId, "Без ключа ANTHROPIC_API_KEY термины не определяются.");
+      return;
+    }
+    const texts = await db.chunkTexts();
+    const known = await db.knownPhrases();
+    const pending = texts.filter((text) => !known.has(text.trim().toLowerCase()));
+    if (!pending.length) {
+      await send(env, chatId, "Все чанки уже классифицированы ✅");
+      return;
+    }
+    // Один запуск ограничен, чтобы не упереться в лимит запросов Cloudflare.
+    const done = await rememberTerms(env, db, pending.slice(0, TERMS_RUN_LIMIT));
+    const left = pending.length - done;
+    await send(
+      env,
+      chatId,
+      left
+        ? `Классифицировано: ${done}. Осталось: ${left}. Запусти /terms ещё раз.`
+        : `Классифицировано: ${done}. Готово ✅`,
+    );
   } else if (command === "stats") {
     await send(env, chatId, await statsText(env, db));
   } else if (command === "reply") {
