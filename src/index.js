@@ -243,7 +243,12 @@ async function onPollAnswer(env, db, answer) {
     await send(env, student.telegram_id, "Квиз на сегодня окончен. Отличная работа! 🎉");
     return;
   }
-  await sendQuiz(env, db, student.telegram_id, student, state.quiz + 1);
+  try {
+    await sendQuiz(env, db, student.telegram_id, student, state.quiz + 1);
+  } catch (error) {
+    console.error("Квиз не продолжился", error.message);
+    await send(env, student.telegram_id, "Не получилось открыть следующий вопрос. Нажми 🧩 Квиз, чтобы продолжить.");
+  }
 }
 
 function formatDate(isoDate) {
