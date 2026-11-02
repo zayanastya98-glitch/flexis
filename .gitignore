@@ -1,5 +1,5 @@
+node_modules/
+package-lock.json
+.wrangler/
+.dev.vars
 .env
-*.db
-__pycache__/
-.pytest_cache/
-.venv/

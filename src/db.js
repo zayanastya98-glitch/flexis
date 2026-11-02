@@ -1,0 +1,289 @@
+// Хранение данных бота в базе Cloudflare D1.
+
+// Через сколько дней повторять чанк на каждом уровне знания.
+const INTERVALS = { 1: 1, 2: 3, 3: 7, 4: 14, 5: 30 };
+// Без похожих символов (0/O, 1/I), чтобы код было легко ввести.
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+// Сколько студентов обрабатывать за один запуск расписания:
+// бесплатный тариф ограничивает число запросов к Telegram.
+export const NOTIFY_BATCH = 10;
+
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS students (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    telegram_id INTEGER UNIQUE,
+    notify_time TEXT NOT NULL DEFAULT '10:00',
+    notify_chunk INTEGER NOT NULL DEFAULT 1,
+    notify_frame INTEGER NOT NULL DEFAULT 0,
+    notify_train INTEGER NOT NULL DEFAULT 0,
+    last_notified TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS chunks (
+    id INTEGER PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    translation TEXT NOT NULL DEFAULT '',
+    example TEXT NOT NULL DEFAULT '',
+    frame TEXT NOT NULL DEFAULT '',
+    box INTEGER NOT NULL DEFAULT 1,
+    due_date TEXT NOT NULL,
+    last_sent TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS answers (
+    id INTEGER PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    frame TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_state (
+    telegram_id INTEGER PRIMARY KEY,
+    data TEXT NOT NULL
+  )`,
+];
+
+function randomCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return Array.from(bytes, (byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join("");
+}
+
+export class Database {
+  constructor(d1) {
+    this.d1 = d1;
+  }
+
+  init() {
+    return this.d1.batch(SCHEMA.map((sql) => this.d1.prepare(sql)));
+  }
+
+  one(sql, ...params) {
+    return this.d1.prepare(sql).bind(...params).first();
+  }
+
+  async many(sql, ...params) {
+    return (await this.d1.prepare(sql).bind(...params).all()).results;
+  }
+
+  run(sql, ...params) {
+    return this.d1.prepare(sql).bind(...params).run();
+  }
+
+  // ---------- Что бот ждёт от пользователя ----------
+  async getState(telegramId) {
+    const row = await this.one(
+      "SELECT data FROM user_state WHERE telegram_id = ?",
+      telegramId,
+    );
+    return row ? JSON.parse(row.data) : {};
+  }
+
+  setState(telegramId, state) {
+    return this.run(
+      `INSERT INTO user_state (telegram_id, data) VALUES (?, ?)
+       ON CONFLICT (telegram_id) DO UPDATE SET data = excluded.data`,
+      telegramId,
+      JSON.stringify(state),
+    );
+  }
+
+  clearState(telegramId) {
+    return this.run("DELETE FROM user_state WHERE telegram_id = ?", telegramId);
+  }
+
+  // ---------- Студенты ----------
+  async addStudent(name) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const code = randomCode();
+      const taken = await this.one("SELECT id FROM students WHERE code = ?", code);
+      if (!taken) {
+        await this.run("INSERT INTO students (name, code) VALUES (?, ?)", name, code);
+        return code;
+      }
+    }
+    throw new Error("Could not create a unique student code");
+  }
+
+  students() {
+    return this.many("SELECT * FROM students ORDER BY name");
+  }
+
+  student(id) {
+    return this.one("SELECT * FROM students WHERE id = ?", id);
+  }
+
+  studentByTelegram(telegramId) {
+    return this.one("SELECT * FROM students WHERE telegram_id = ?", telegramId);
+  }
+
+  // Привязывает код к Telegram. Занятый чужой код не срабатывает.
+  async linkStudent(code, telegramId) {
+    const row = await this.one(
+      "SELECT * FROM students WHERE code = ?",
+      code.trim().toUpperCase(),
+    );
+    if (!row || (row.telegram_id !== null && row.telegram_id !== telegramId)) {
+      return null;
+    }
+    await this.run(
+      "UPDATE students SET telegram_id = ? WHERE id = ?",
+      telegramId,
+      row.id,
+    );
+    return row.name;
+  }
+
+  toggleNotification(studentId, kind) {
+    const column = {
+      chunk: "notify_chunk",
+      frame: "notify_frame",
+      train: "notify_train",
+    }[kind];
+    if (!column) return null;
+    return this.run(
+      `UPDATE students SET ${column} = 1 - ${column} WHERE id = ?`,
+      studentId,
+    );
+  }
+
+  // skipDay: день, за который рассылка уже не нужна (или null).
+  setNotifyTime(studentId, value, skipDay) {
+    return this.run(
+      "UPDATE students SET notify_time = ?, last_notified = ? WHERE id = ?",
+      value,
+      skipDay,
+      studentId,
+    );
+  }
+
+  studentsToNotify(nowTime, today) {
+    return this.many(
+      `SELECT * FROM students
+       WHERE telegram_id IS NOT NULL
+         AND notify_time <= ?
+         AND (last_notified IS NULL OR last_notified < ?)
+         AND (notify_chunk = 1 OR notify_frame = 1 OR notify_train = 1)
+       ORDER BY notify_time LIMIT ?`,
+      nowTime,
+      today,
+      NOTIFY_BATCH,
+    );
+  }
+
+  markNotified(studentId, today) {
+    return this.run(
+      "UPDATE students SET last_notified = ? WHERE id = ?",
+      today,
+      studentId,
+    );
+  }
+
+  // ---------- Чанки ----------
+  addChunks(studentIds, rows, today) {
+    const statement = this.d1.prepare(
+      `INSERT INTO chunks (student_id, text, translation, example, frame, due_date)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const inserts = studentIds.flatMap((studentId) =>
+      rows.map(([text, translation, example, frame]) =>
+        statement.bind(studentId, text, translation, example, frame, today),
+      ),
+    );
+    return this.d1.batch(inserts);
+  }
+
+  chunks(studentId) {
+    return this.many(
+      "SELECT * FROM chunks WHERE student_id = ? ORDER BY id DESC",
+      studentId,
+    );
+  }
+
+  // Студент может получить только свой чанк.
+  chunk(chunkId, studentId) {
+    return this.one(
+      "SELECT * FROM chunks WHERE id = ? AND student_id = ?",
+      chunkId,
+      studentId,
+    );
+  }
+
+  async deleteChunk(chunkId) {
+    const result = await this.run("DELETE FROM chunks WHERE id = ?", chunkId);
+    return result.meta.changes > 0;
+  }
+
+  nextCard(studentId, today) {
+    return this.one(
+      `SELECT * FROM chunks WHERE student_id = ? AND due_date <= ?
+       ORDER BY due_date, RANDOM() LIMIT 1`,
+      studentId,
+      today,
+    );
+  }
+
+  async dueCount(studentId, today) {
+    const row = await this.one(
+      "SELECT COUNT(*) AS total FROM chunks WHERE student_id = ? AND due_date <= ?",
+      studentId,
+      today,
+    );
+    return row.total;
+  }
+
+  // «Знаю» отодвигает повтор, «Повторить» возвращает чанк на завтра.
+  async review(chunkId, studentId, known, today) {
+    const chunk = await this.chunk(chunkId, studentId);
+    if (!chunk) return;
+    const box = known ? Math.min(chunk.box + 1, 5) : 1;
+    const due = new Date(`${today}T00:00:00Z`);
+    due.setUTCDate(due.getUTCDate() + INTERVALS[box]);
+    await this.run(
+      "UPDATE chunks SET box = ?, due_date = ? WHERE id = ?",
+      box,
+      due.toISOString().slice(0, 10),
+      chunkId,
+    );
+  }
+
+  // Чанк дня: сначала те, что дольше всего не приходили.
+  async nextDailyChunk(studentId, today) {
+    const row = await this.one(
+      `SELECT * FROM chunks WHERE student_id = ?
+       ORDER BY last_sent IS NOT NULL, last_sent, RANDOM() LIMIT 1`,
+      studentId,
+    );
+    if (row) {
+      await this.run("UPDATE chunks SET last_sent = ? WHERE id = ?", today, row.id);
+    }
+    return row;
+  }
+
+  randomFrame(studentId) {
+    return this.one(
+      `SELECT * FROM chunks WHERE student_id = ? AND frame != ''
+       ORDER BY RANDOM() LIMIT 1`,
+      studentId,
+    );
+  }
+
+  // ---------- Ответы ----------
+  addAnswer(studentId, frame, answer) {
+    return this.run(
+      "INSERT INTO answers (student_id, frame, answer) VALUES (?, ?, ?)",
+      studentId,
+      frame,
+      answer,
+    );
+  }
+
+  recentAnswers(limit = 20) {
+    return this.many(
+      `SELECT students.name, answers.frame, answers.answer
+       FROM answers JOIN students ON students.id = answers.student_id
+       ORDER BY answers.id DESC LIMIT ?`,
+      limit,
+    );
+  }
+}

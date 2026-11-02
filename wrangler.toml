@@ -1,0 +1,14 @@
+name = "flexis"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+[vars]
+TIMEZONE = "Europe/Istanbul"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "flexis-db"
+database_id = "ВСТАВИТЬ_ID_БАЗЫ"
