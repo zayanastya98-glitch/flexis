@@ -220,11 +220,33 @@ async function sendQuiz(env, db, chatId, student, count = 0) {
     type: "quiz",
     correct_option_id: options.indexOf(correct.text),
     is_anonymous: false,
-    // Telegram показывает это объяснение после ответа.
-    explanation: correct.example ? `Пример: ${correct.example}`.slice(0, 200) : undefined,
   });
   await db.saveQuiz(result.poll.id, student.id, options.indexOf(correct.text));
-  await db.setState(student.telegram_id, { quiz: count });
+  // Пример покажем сообщением сразу после ответа, поэтому запоминаем его здесь.
+  await db.setState(student.telegram_id, {
+    quiz: count,
+    poll: { id: result.poll.id, text: correct.text, example: correct.example || "" },
+  });
+}
+
+// Сообщение после ответа: верно или нет, и пример с выделенным чанком.
+async function sendVerdict(env, chatId, poll, correct) {
+  const head = correct ? "✅ Верно!" : `❌ Не совсем. Правильно: ${poll.text}`;
+  const entities = correct ? [] : [{ type: "bold", offset: head.length - poll.text.length, length: poll.text.length }];
+  let text = head;
+  if (poll.example) {
+    const label = "\n\nПример: ";
+    const at = poll.example.toLowerCase().indexOf(poll.text.toLowerCase());
+    if (at >= 0) {
+      entities.push({
+        type: "bold",
+        offset: text.length + label.length + at,
+        length: poll.text.length,
+      });
+    }
+    text += label + poll.example;
+  }
+  return send(env, chatId, text, null, entities.length ? entities : undefined);
 }
 
 // Telegram присылает ответ на квиз, мы его засчитываем.
@@ -233,11 +255,15 @@ async function onPollAnswer(env, db, answer) {
   if (!quiz || quiz.answered || !answer.option_ids.length) return;
   const student = await db.student(quiz.student_id);
   if (!student || student.telegram_id !== answer.user.id) return;
-  await db.answerQuiz(answer.poll_id, student.id, answer.option_ids[0] === quiz.correct_index);
+  const correct = answer.option_ids[0] === quiz.correct_index;
+  await db.answerQuiz(answer.poll_id, student.id, correct);
 
   // Квиз продолжается сам, пока студентка не выйдет из него кнопкой меню.
   const state = await db.getState(student.telegram_id);
   if (typeof state.quiz !== "number") return;
+  if (state.poll && state.poll.id === answer.poll_id) {
+    await sendVerdict(env, student.telegram_id, state.poll, correct);
+  }
   if (state.quiz + 1 >= MAX_QUIZ_QUESTIONS) {
     await db.clearState(student.telegram_id);
     await send(env, student.telegram_id, "Квиз на сегодня окончен. Отличная работа! 🎉");

@@ -737,6 +737,8 @@ test("квиз-опрос проверяет знание и считается 
   // Правильный ответ засчитывается и квиз сразу присылает следующий вопрос.
   await post(env, { poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [correct] } });
   assert.equal(polls(), 2);
+  // После ответа сразу приходит сообщение с примером из лексики.
+  assert.ok(sent.some((item) => item.method === "sendMessage" && /Верно!/.test(item.body.text)));
   // Повторная смена ответа уже не меняет счёт и не запускает новый вопрос.
   await post(env, {
     poll_answer: { poll_id: pollId, user: { id: STUDENT }, option_ids: [correct === 0 ? 1 : 0] },
