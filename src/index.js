@@ -4,6 +4,7 @@ import { Database } from "./db.js";
 import { checkAnswer } from "./feedback.js";
 import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
+import { rememberTerms } from "./terms.js";
 
 const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
@@ -439,8 +440,9 @@ function dictionaryTerms(text) {
 }
 
 // Ряд кнопок произношения: термины в словаре и, если есть, фраза в YouGlish.
-function pronunciationRow(text) {
-  const row = dictionaryTerms(text).map((term) => ({
+// terms — результат Claude, сохранённый при добавлении чанка; без него правило выше.
+function pronunciationRow(text, terms) {
+  const row = (terms || dictionaryTerms(text)).map((term) => ({
     text: `🔊 ${term}`,
     url: dictionaryUrl(term),
   }));
@@ -726,7 +728,10 @@ async function saveVocabulary(env, db, message, state) {
       await db.chunks(student.id),
       rows,
     );
-    if (fresh.length) await db.addChunks([student.id], fresh, today);
+    if (fresh.length) {
+      await db.addChunks([student.id], fresh, today);
+      await rememberTerms(env, db, fresh.map((row) => row[0]));
+    }
     added += fresh.length;
     skipped += duplicates.length;
     const owner = showName ? `${student.name}: ` : "";
@@ -843,6 +848,7 @@ async function saveStudentChunks(env, db, message, student, text) {
   await db.clearState(message.from.id);
   if (fresh.length) {
     await db.addChunks([student.id], fresh, clock(env).date);
+    await rememberTerms(env, db, fresh.map((row) => row[0]));
     await db.increment(student.id, "own_chunks", fresh.length);
   }
   const reply = [];
@@ -1270,7 +1276,7 @@ async function onButton(env, db, query) {
               inline("🔁 Повторить", `again:${id}:${number}`),
               inline("✅ Знаю", `know:${id}:${number}`),
             ],
-            pronunciationRow(chunk.text),
+            pronunciationRow(chunk.text, await db.phraseTerms(chunk.text.trim().toLowerCase())),
           ],
         },
       });

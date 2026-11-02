@@ -5,6 +5,7 @@ import test from "node:test";
 import { Database, NOTIFY_BATCH } from "../src/db.js";
 import worker, { parseChunks } from "../src/index.js";
 import { chunkKey, compareChunks, findDuplicatePairs } from "../src/similar.js";
+import { rememberTerms } from "../src/terms.js";
 
 const DAY = "2026-11-02";
 const TEACHER = 1;
@@ -1043,4 +1044,43 @@ test("ошибка Telegram не ломает ответ сервера", async 
     new Response(JSON.stringify({ ok: false, description: "blocked" }));
   const response = await say(env, 99, "/myid");
   assert.equal(response.status, 200);
+});
+
+test("термины Claude сохраняются один раз при добавлении и без ключа не запускаются", async () => {
+  const db = await freshDb();
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push(JSON.parse(options.body));
+    const answer = [
+      { phrase: "weed out", type: "phrasal", terms: ["weed out"] },
+      { phrase: "wry smile", type: "collocation", terms: ["wry"] },
+    ];
+    return new Response(
+      JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answer) }] }),
+    );
+  };
+
+  await rememberTerms({}, db, ["weed out"]);
+  assert.equal(calls.length, 0, "без ключа запроса быть не должно");
+
+  const env = { ANTHROPIC_API_KEY: "key" };
+  await rememberTerms(env, db, ["Weed out", "wry smile"]);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(await db.phraseTerms("weed out"), ["weed out"]);
+  assert.deepEqual(await db.phraseTerms("wry smile"), ["wry"]);
+
+  await rememberTerms(env, db, ["weed out", "wry smile"]);
+  assert.equal(calls.length, 1, "уже классифицированные фразы повторно не отправляются");
+});
+
+test("карточка берёт сохранённые термины, а не простое правило", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.savePhraseTerms([{ phrase: "let bygones be bygones", terms: ["let bygones be bygones"] }]);
+  await db.addChunks([sonya.id], [["let bygones be bygones", "забыть обиды", "", ""]], DAY);
+  const chunk = (await db.chunks(sonya.id)).find((row) => row.text === "let bygones be bygones");
+  sent.length = 0;
+  await press(env, STUDENT, `show:${chunk.id}:1`);
+  const edit = sent.find((item) => item.method === "editMessageText");
+  assert.ok(JSON.stringify(edit.body.reply_markup).includes("let-bygones-be-bygones"));
 });

@@ -75,6 +75,11 @@ const SCHEMA = [
     telegram_id INTEGER PRIMARY KEY,
     data TEXT NOT NULL
   )`,
+  // Термины для словаря: Claude заполняет при добавлении чанка, карточка только читает.
+  `CREATE TABLE IF NOT EXISTS phrase_terms (
+    phrase TEXT PRIMARY KEY,
+    terms TEXT NOT NULL
+  )`,
 ];
 
 function randomCode() {
@@ -428,6 +433,30 @@ export class Database {
       chunks: chunks.total,
       answers: answers.total,
     };
+  }
+
+  // ---------- Термины для словаря ----------
+  // Возвращает массив терминов или null, если фраза ещё не классифицирована.
+  async phraseTerms(phrase) {
+    const row = await this.one("SELECT terms FROM phrase_terms WHERE phrase = ?", phrase);
+    return row ? JSON.parse(row.terms) : null;
+  }
+
+  // Все уже классифицированные фразы одним запросом.
+  async knownPhrases() {
+    const rows = await this.many("SELECT phrase FROM phrase_terms");
+    return new Set(rows.map((row) => row.phrase));
+  }
+
+  savePhraseTerms(list) {
+    if (!list.length) return Promise.resolve();
+    return this.d1.batch(
+      list.map((item) =>
+        this.d1
+          .prepare("INSERT OR REPLACE INTO phrase_terms (phrase, terms) VALUES (?, ?)")
+          .bind(item.phrase, JSON.stringify(item.terms)),
+      ),
+    );
   }
 
   // ---------- Квиз ----------
