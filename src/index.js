@@ -5,8 +5,14 @@ import { Database } from "./db.js";
 const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
 const NOTIFICATIONS = "🔔 Уведомления";
+const ADD_CHUNK = "➕ Добавить чанк";
+// Сколько чанков студент может добавить одним сообщением.
+const MAX_STUDENT_CHUNKS = 20;
 const MENU = {
-  keyboard: [[{ text: CARDS }, { text: FRAMES }], [{ text: NOTIFICATIONS }]],
+  keyboard: [
+    [{ text: CARDS }, { text: FRAMES }],
+    [{ text: ADD_CHUNK }, { text: NOTIFICATIONS }],
+  ],
   resize_keyboard: true,
 };
 const ADD_FORMAT =
@@ -15,6 +21,13 @@ const ADD_FORMAT =
   "Например:\n" +
   "used to | раньше (привычка) | I used to teach in a school. | I used to...\n\n" +
   "Обязателен только чанк. /cancel — отмена.";
+const STUDENT_ADD_FORMAT =
+  "Пришли чанк. Можно добавить несколько, каждый с новой строки.\n\n" +
+  "Перевод, пример и начало фразы необязательны, их можно написать через |:\n" +
+  "чанк | перевод | пример | начало фразы\n\n" +
+  "Например:\n" +
+  "used to | раньше | I used to live in Moscow. | I used to...\n\n" +
+  "/cancel — отмена.";
 const TEACHER_HELP =
   "Команды преподавателя:\n" +
   "/addstudent Имя — создать студента и его ID\n" +
@@ -248,6 +261,34 @@ async function saveAnswer(env, db, message, student, state, text) {
   }
 }
 
+async function saveStudentChunks(env, db, message, student, text) {
+  const chatId = message.chat.id;
+  const rows = parseChunks(text);
+  if (!rows.length) {
+    await send(env, chatId, STUDENT_ADD_FORMAT);
+    return;
+  }
+  if (rows.length > MAX_STUDENT_CHUNKS) {
+    await send(env, chatId, `За один раз можно добавить до ${MAX_STUDENT_CHUNKS} чанков.`);
+    return;
+  }
+  await db.addChunks([student.id], rows, clock(env).date);
+  await db.clearState(message.from.id);
+  await send(env, chatId, `Добавлено чанков: ${rows.length}. Они уже в карточках! ✅`);
+  if (env.TEACHER_ID) {
+    try {
+      const list = rows.map((row) => row.filter(Boolean).join(" | ")).join("\n");
+      await send(
+        env,
+        env.TEACHER_ID,
+        `${student.name} добавляет лексику:\n\n${list}`.slice(0, 4000),
+      );
+    } catch (error) {
+      console.error("Не удалось уведомить преподавателя", error.message);
+    }
+  }
+}
+
 async function saveTime(env, db, message, student, text) {
   const match = text.match(/^([01]?\d|2[0-3])[:.]([0-5]\d)$/);
   if (!match) {
@@ -303,6 +344,11 @@ async function onText(env, db, message) {
       "Выбери, что присылать раз в день:",
       notificationsKeyboard(student),
     );
+  } else if (text === ADD_CHUNK) {
+    await db.setState(userId, { awaiting: "chunk" });
+    await send(env, chatId, STUDENT_ADD_FORMAT);
+  } else if (state.awaiting === "chunk") {
+    await saveStudentChunks(env, db, message, student, text);
   } else if (state.awaiting === "frame") {
     await saveAnswer(env, db, message, student, state, text);
   } else if (state.awaiting === "time") {

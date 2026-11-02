@@ -263,6 +263,42 @@ test("настройка времени и рассылка по расписа�
   assert.equal(sent.length, count);
 });
 
+test("студент добавляет свои чанки", async () => {
+  const { env, sent } = await environment();
+  await say(env, TEACHER, "/addstudent Анна");
+  await say(env, TEACHER, "/addstudent Борис");
+  const db = new Database(env.DB);
+  const [anna, boris] = await db.students();
+  await say(env, STUDENT, anna.code);
+
+  await say(env, STUDENT, "➕ Добавить чанк");
+  await say(env, STUDENT, "look forward to | ждать с нетерпением\nmake sense");
+  assert.equal(sent.at(-1).body.chat_id, String(TEACHER));
+  assert.match(lastText(sent), /Анна добавляет лексику/);
+  assert.match(lastText(sent), /look forward to \| ждать с нетерпением/);
+
+  assert.equal((await db.chunks(anna.id)).length, 2);
+  assert.equal((await db.chunks(boris.id)).length, 0);
+
+  await say(env, STUDENT, "🃏 Карточки");
+  assert.match(lastText(sent), /look forward to|make sense/);
+
+  // Следующее сообщение уже не считается чанком.
+  await say(env, STUDENT, "просто текст");
+  assert.equal(lastText(sent), "Выбери действие в меню 👇");
+  assert.equal((await db.chunks(anna.id)).length, 2);
+
+  // Кнопка меню отменяет добавление и не становится чанком.
+  await say(env, STUDENT, "➕ Добавить чанк");
+  await say(env, STUDENT, "🔔 Уведомления");
+  assert.equal((await db.chunks(anna.id)).length, 2);
+
+  await say(env, STUDENT, "➕ Добавить чанк");
+  await say(env, STUDENT, Array(21).fill("x").join("\n"));
+  assert.match(lastText(sent), /до 20 чанков/);
+  assert.equal((await db.chunks(anna.id)).length, 2);
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>
