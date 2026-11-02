@@ -50,6 +50,7 @@ const TEACHER_HELP =
   "/students — список студентов и их ID\n" +
   "/add — добавить лексику\n" +
   "/note — отправить заметку с урока\n" +
+  "/reply — написать студенту от твоего имени\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
   "/list — посмотреть лексику студента\n" +
@@ -60,6 +61,7 @@ const TEACHER_HELP =
 const TEACHER_COMMANDS = [
   { command: "add", description: "Добавить лексику" },
   { command: "note", description: "Отправить заметку с урока" },
+  { command: "reply", description: "Написать студенту" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
@@ -310,6 +312,17 @@ async function onCommand(env, db, message, command, argument) {
       "Чей прогресс обнулить?",
       await studentPicker(db, "resetfor", false),
     );
+  } else if (command === "reply") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Студентов пока нет: /addstudent Имя");
+      return;
+    }
+    await send(
+      env,
+      chatId,
+      "Кому написать?",
+      await studentPicker(db, "replyto", false),
+    );
   } else if (command === "note") {
     if (!(await db.students()).length) {
       await send(env, chatId, "Сначала создай студента: /addstudent Имя");
@@ -443,6 +456,35 @@ async function saveNote(env, db, message, state) {
   }
 }
 
+async function saveReply(env, db, message, state) {
+  const chatId = message.chat.id;
+  const text = message.text.trim();
+  if (text.length > MAX_NOTE_LENGTH) {
+    await send(env, chatId, "Сообщение слишком длинное. Сократи его и пришли снова.");
+    return;
+  }
+  const student = await db.student(state.replyTo);
+  await db.clearState(message.from.id);
+  if (!student || !student.telegram_id) {
+    await send(env, chatId, "Этот студент ещё не вошёл в бота, сообщение не отправлено.");
+    return;
+  }
+  try {
+    const title = "💬 Сообщение от Насти";
+    await send(
+      env,
+      student.telegram_id,
+      `${title}\n\n${text}`,
+      null,
+      boldChunk({ text: title }),
+    );
+    await send(env, chatId, `Отправлено: ${student.name}.`);
+  } catch (error) {
+    console.error("Не удалось отправить сообщение студенту", error.message);
+    await send(env, chatId, `Не удалось доставить сообщение: ${student.name}.`);
+  }
+}
+
 async function saveAnswer(env, db, message, student, state, text) {
   await db.addAnswer(student.id, state.frame, text);
   await db.clearState(message.from.id);
@@ -457,11 +499,9 @@ async function saveAnswer(env, db, message, student, state, text) {
   if (env.TEACHER_ID) {
     try {
       const report = `${student.name}\n${state.frame}\n→ ${text}`;
-      await send(
-        env,
-        env.TEACHER_ID,
-        feedback ? `${report}\n\n🤖 ${feedback}` : report,
-      );
+      await send(env, env.TEACHER_ID, feedback ? `${report}\n\n🤖 ${feedback}` : report, {
+        inline_keyboard: [[inline("Ответить", `replyto:${student.id}`)]],
+      });
     } catch (error) {
       console.error("Не удалось переслать ответ преподавателю", error.message);
     }
@@ -530,6 +570,10 @@ async function onText(env, db, message) {
 
   if (isTeacher(env, userId) && state.addingFor !== undefined) {
     await saveVocabulary(env, db, message, state);
+    return;
+  }
+  if (isTeacher(env, userId) && state.replyTo !== undefined) {
+    await saveReply(env, db, message, state);
     return;
   }
   if (isTeacher(env, userId) && state.noteFor !== undefined) {
@@ -645,6 +689,15 @@ async function onButton(env, db, query) {
       message_id: messageId,
       text: `Прогресс обнулён: ${student.name}.`,
     });
+    return;
+  }
+
+  if (action === "replyto") {
+    if (!isTeacher(env, userId)) return;
+    const student = await db.student(id);
+    if (!student) return;
+    await db.setState(userId, { replyTo: student.id });
+    await send(env, chatId, `Напиши сообщение для: ${student.name}. /cancel — отмена.`);
     return;
   }
 

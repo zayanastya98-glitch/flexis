@@ -647,6 +647,38 @@ test("автопроверка останавливается после дне�
   assert.equal(calls, 0);
 });
 
+test("Настя может ответить студенту через бота", async () => {
+  const { env, sent } = await environment();
+  const { sonya } = await studentWithFrame(env);
+
+  // Команда работает и для ответов, присланных раньше.
+  await say(env, TEACHER, "/reply");
+  await press(env, TEACHER, `replyto:${sonya.id}`);
+  await say(env, TEACHER, "Отличная фраза, но лучше сказать work from home");
+  const toStudent = sent.at(-2);
+  assert.equal(toStudent.body.chat_id, STUDENT);
+  assert.match(toStudent.body.text, /^💬 Сообщение от Насти\n\nОтличная фраза/);
+  assert.equal(lastText(sent), "Отправлено: Соня.");
+
+  await say(env, STUDENT, "✍️ Закончи фразу");
+  await say(env, STUDENT, "work in an office");
+  const button = sent.at(-1).body.reply_markup.inline_keyboard[0][0];
+  assert.equal(button.callback_data, `replyto:${sonya.id}`);
+
+  // Студент не может писать другим от имени Насти.
+  const count = sent.length;
+  await press(env, STUDENT, button.callback_data);
+  await say(env, STUDENT, "привет");
+  assert.ok(sent.slice(count).every((item) => !item.body.text?.includes("Сообщение от Насти")));
+
+  await say(env, TEACHER, "/addstudent Анна");
+  const db = new Database(env.DB);
+  const [anna] = await db.students();
+  await press(env, TEACHER, `replyto:${anna.id}`);
+  await say(env, TEACHER, "Привет");
+  assert.match(lastText(sent), /ещё не вошёл/);
+});
+
 test("ошибка Telegram не ломает ответ сервера", async () => {
   const { env } = await environment();
   globalThis.fetch = async () =>
