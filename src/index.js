@@ -442,6 +442,8 @@ const PLACEHOLDER = /\b(one'?s|oneself|someone|somebody|sb|sth|something)\b/i;
 // YouGlish по всей фразе: произношение и примеры из видео. Или null, если фразы там обычно нет.
 function youglishUrl(phrase) {
   if (PLACEHOLDER.test(phrase)) return null;
+  // «be rooted in» в видео звучит как «is rooted in», поэтому такой поиск бесполезен.
+  if (/^(to\s+)?be\s/i.test(phrase.trim())) return null;
   const clean = phrase.toLowerCase().replace(/[^a-z\s'-]/g, "").trim();
   return `https://youglish.com/pronounce/${encodeURIComponent(clean)}/english`;
 }
