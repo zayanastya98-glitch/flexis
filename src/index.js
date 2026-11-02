@@ -1042,7 +1042,7 @@ async function onButton(env, db, query) {
     const questions = await makeQuestions(env, chunks);
     await db.setState(userId, { ...state, awaiting: "task", task: { chunks, questions } });
     const intro = questions
-      ? `Ответь на вопросы, используя чанки ниже. Можно письменно или голосовым:\n\n${questions.join("\n")}`
+      ? `Ответь на вопросы (один, два или все), используя чанки ниже. Можно письменно или голосовым:\n\n${questions.join("\n")}`
       : "Напиши по одному предложению с каждым чанком. Можно письменно или голосовым:";
     await send(
       env,
