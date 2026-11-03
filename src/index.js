@@ -553,9 +553,11 @@ async function onCommand(env, db, message, command, argument) {
   const userId = message.from.id;
   const teacher = isTeacher(env, userId);
 
+  // Меню команд обновляется при каждой команде Насти, чтобы новые команды появлялись сами.
+  if (teacher) await showTeacherMenu(env, chatId);
+
   if (command === "start") {
     await db.clearState(userId);
-    if (teacher) await showTeacherMenu(env, chatId);
     const student = await db.studentByTelegram(userId);
     if (student) {
       await send(env, chatId, `Привет, ${student.name}! Что потренируем?`, MENU);
