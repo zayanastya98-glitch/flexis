@@ -266,7 +266,7 @@ test("настройка времени и рассылка по расписа�
   const texts = sent.map((item) => item.body.text);
   const daily = sent.find((item) => item.body.text?.startsWith("Чанк дня"));
   // Студентка уже заходила сегодня, поэтому серия есть.
-  assert.match(daily.body.text, /Серия: 1 дн\. подряд\. Продолжим\?$/);
+  assert.match(daily.body.text, /Серия: 1 дн\. подряд\. Продолжим\?\n/);
   const [bold] = daily.body.entities;
   assert.equal(bold.type, "bold");
   assert.equal(daily.body.text.slice(bold.offset, bold.offset + bold.length), "used to");
@@ -300,7 +300,7 @@ test("студент добавляет свои чанки", async (t) => {
 
   // Следующее сообщение уже не считается чанком.
   await say(env, STUDENT, "просто текст");
-  assert.equal(lastText(sent), "Выбери действие в меню 👇");
+  assert.equal(lastText(sent), "Выбирай в меню, чем сегодня займёшься 👇");
   assert.equal((await db.chunks(anna.id)).length, 2);
 
   // Кнопка меню отменяет добавление и не становится чанком.
@@ -311,6 +311,12 @@ test("студент добавляет свои чанки", async (t) => {
   await say(env, STUDENT, "➕ Добавить чанк");
   await say(env, STUDENT, Array(21).fill("x").join("\n"));
   assert.match(lastText(sent), /до 20 чанков/);
+  assert.equal((await db.chunks(anna.id)).length, 2);
+
+  // Ответ «да» без английских букв в лексику не попадает.
+  await say(env, STUDENT, "➕ Добавить чанк");
+  await say(env, STUDENT, "да");
+  assert.match(lastText(sent), /Не добавила, это не английский чанк: да/);
   assert.equal((await db.chunks(anna.id)).length, 2);
 });
 
