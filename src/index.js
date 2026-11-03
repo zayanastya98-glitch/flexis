@@ -522,6 +522,7 @@ function notificationsKeyboard(student) {
       [inline(`${mark(student.notify_chunk)} Чанк дня с примером`, "notify:chunk")],
       [inline(`${mark(student.notify_frame)} Задание «Закончи фразу»`, "notify:frame")],
       [inline(`${mark(student.notify_train)} Напоминание о карточках`, "notify:train")],
+      [inline(`${mark(student.notify_weekly)} Раз в неделю: воскресенье, 18:00`, "notify:weekly")],
       [inline(`🕒 Время: ${student.notify_time}`, "settime")],
     ],
   };
@@ -1926,6 +1927,23 @@ async function sendNotifications(env, db) {
   }
 }
 
+// Раз в неделю, по воскресеньям после 18:00, если студент не отключил.
+const WEEKLY_TIME = "18:00";
+const WEEKLY_TEXT = "Привет! Как насчёт 5 минут английского? Выбирай, чем сегодня займёмся в меню 👇";
+
+export async function sendWeeklyReminders(env, db, now = clock(env)) {
+  const { date, time } = now;
+  if (time < WEEKLY_TIME || new Date(`${date}T12:00:00Z`).getUTCDay() !== 0) return;
+  for (const student of await db.weeklyStudents(date)) {
+    await db.markWeekly(student.id, date);
+    try {
+      await send(env, student.telegram_id, WEEKLY_TEXT, MENU);
+    } catch (error) {
+      console.error(`Не удалось отправить недельное напоминание ${student.id}`, error.message);
+    }
+  }
+}
+
 // ---------- Подключение к Telegram ----------
 // Секрет вычисляется из токена, поэтому отдельно его хранить не нужно.
 async function webhookSecret(env) {
@@ -1983,7 +2001,7 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
-      openDb(env).then((db) => Promise.all([sendNotifications(env, db), sendLessonReminders(env, db)])),
+      openDb(env).then((db) => Promise.all([sendNotifications(env, db), sendLessonReminders(env, db), sendWeeklyReminders(env, db)])),
     );
   },
 };

@@ -15,6 +15,11 @@ export function previousDay(day) {
 // бесплатный тариф ограничивает число запросов к Telegram.
 export const NOTIFY_BATCH = 10;
 
+const STUDENT_COLUMNS = [
+  ["notify_weekly", "INTEGER NOT NULL DEFAULT 1"],
+  ["last_weekly", "TEXT"],
+];
+
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS students (
     id INTEGER PRIMARY KEY,
@@ -25,7 +30,9 @@ const SCHEMA = [
     notify_chunk INTEGER NOT NULL DEFAULT 1,
     notify_frame INTEGER NOT NULL DEFAULT 0,
     notify_train INTEGER NOT NULL DEFAULT 0,
-    last_notified TEXT
+    notify_weekly INTEGER NOT NULL DEFAULT 1,
+    last_notified TEXT,
+    last_weekly TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY,
@@ -138,8 +145,15 @@ export class Database {
     this.d1 = d1;
   }
 
-  init() {
-    return this.d1.batch(SCHEMA.map((sql) => this.d1.prepare(sql)));
+  async init() {
+    await this.d1.batch(SCHEMA.map((sql) => this.d1.prepare(sql)));
+    // Старые базы созданы без новых колонок: CREATE TABLE их не добавит, поэтому дописываем отдельно.
+    const columns = (await this.many("PRAGMA table_info(students)")).map((row) => row.name);
+    for (const [name, definition] of STUDENT_COLUMNS) {
+      if (!columns.includes(name)) {
+        await this.run(`ALTER TABLE students ADD COLUMN ${name} ${definition}`);
+      }
+    }
   }
 
   one(sql, ...params) {
@@ -254,6 +268,7 @@ export class Database {
       chunk: "notify_chunk",
       frame: "notify_frame",
       train: "notify_train",
+      weekly: "notify_weekly",
     }[kind];
     if (!column) return null;
     return this.run(
@@ -292,6 +307,23 @@ export class Database {
       today,
       studentId,
     );
+  }
+
+  // Студенты, которым ещё не отправили недельное напоминание за эту дату.
+  weeklyStudents(today) {
+    return this.many(
+      `SELECT * FROM students
+       WHERE telegram_id IS NOT NULL
+         AND notify_weekly = 1
+         AND (last_weekly IS NULL OR last_weekly < ?)
+       LIMIT ?`,
+      today,
+      NOTIFY_BATCH,
+    );
+  }
+
+  markWeekly(studentId, today) {
+    return this.run("UPDATE students SET last_weekly = ? WHERE id = ?", today, studentId);
   }
 
   // ---------- Чанки ----------
@@ -407,7 +439,7 @@ export class Database {
       this.d1
         .prepare(
           `UPDATE students SET notify_time = '10:00', notify_chunk = 1, notify_frame = 0,
-             notify_train = 0, last_notified = NULL WHERE id = ?`,
+             notify_train = 0, notify_weekly = 1, last_notified = NULL WHERE id = ?`,
         )
         .bind(studentId),
     ]);

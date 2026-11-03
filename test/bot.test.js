@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { Database, NOTIFY_BATCH } from "../src/db.js";
-import worker, { parseChunks, sendLessonReminders } from "../src/index.js";
+import worker, { parseChunks, sendLessonReminders, sendWeeklyReminders } from "../src/index.js";
 import { chunkKey, compareChunks, findDuplicatePairs } from "../src/similar.js";
 import { rememberTerms } from "../src/terms.js";
 import { fillFrames } from "../src/frames.js";
@@ -1393,3 +1393,26 @@ async function zeroBalanceFor(env, db, studentId) {
   const { zeroBalanceText } = await import("../src/index.js");
   return zeroBalanceText(db, studentId);
 }
+
+test("раз в неделю по воскресеньям в 18:00 у всех, можно отключить", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  const weekly = () => sent.filter((item) => item.body.text?.includes("Как насчёт 5 минут английского"));
+
+  // Понедельник 18:00 — не отправляем.
+  await sendWeeklyReminders(env, db, { date: "2026-11-02", time: "18:00" });
+  assert.equal(weekly().length, 0);
+  // Воскресенье до 18:00 — тоже нет.
+  await sendWeeklyReminders(env, db, { date: "2026-11-08", time: "17:59" });
+  assert.equal(weekly().length, 0);
+  // Воскресенье 18:00 — отправляем один раз, по умолчанию включено.
+  await sendWeeklyReminders(env, db, { date: "2026-11-08", time: "18:00" });
+  await sendWeeklyReminders(env, db, { date: "2026-11-08", time: "18:01" });
+  assert.equal(weekly().length, 1);
+  assert.match(weekly()[0].body.text, /в меню/);
+
+  // Студентка отключила — на следующее воскресенье не приходит.
+  await db.toggleNotification(sonya.id, "weekly");
+  await sendWeeklyReminders(env, db, { date: "2026-11-15", time: "18:00" });
+  assert.equal(weekly().length, 1);
+});
