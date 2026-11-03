@@ -1128,13 +1128,13 @@ async function saveStudentChunks(env, db, message, student, text) {
   const parsed = parseChunks(text);
   // Чанк должен содержать английские буквы: «да» или «ок» в лексику не попадают.
   const rows = parsed.filter((row) => /[a-z]/i.test(row[0]));
-  if (!rows.length) {
-    await send(env, chatId, STUDENT_ADD_FORMAT);
-    return;
-  }
-  if (rows.length < parsed.length) {
-    const skipped = parsed.filter((row) => !/[a-z]/i.test(row[0])).map((row) => row[0]);
+  const skipped = parsed.filter((row) => !/[a-z]/i.test(row[0])).map((row) => row[0]);
+  if (skipped.length) {
     await send(env, chatId, `Не добавила, это не английский чанк: ${skipped.join(", ")}.`);
+  }
+  if (!rows.length) {
+    if (!skipped.length) await send(env, chatId, STUDENT_ADD_FORMAT);
+    return;
   }
   if (rows.length > MAX_STUDENT_CHUNKS) {
     await send(env, chatId, `За один раз можно добавить до ${MAX_STUDENT_CHUNKS} чанков.`);
