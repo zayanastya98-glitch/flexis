@@ -919,7 +919,7 @@ test("квиз-опрос проверяет знание и считается 
   });
   assert.equal(polls(), 2);
 
-  await say(env, STUDENT, "🏅 Прогресс");
+  await say(env, STUDENT, "📅 Занятия");
   assert.match(lastText(sent), /Квиз: верно 1 из 1/);
   assert.match(lastText(sent), /Серия: 1 дн\. \(рекорд: 1\)/);
 });

@@ -26,7 +26,6 @@ const NOTIFICATIONS = "🔔 Уведомления";
 const ADD_CHUNK = "➕ Добавить чанк";
 const NOTES = "📝 Заметки";
 const QUIZ = "🧩 Квиз";
-const PROGRESS = "🏅 Прогресс";
 // Запас до лимита Telegram: к тексту добавляется заголовок с датой.
 const MAX_NOTE_LENGTH = 3900;
 const MAX_DUPES_CHECK = 150;
@@ -58,8 +57,7 @@ function frameTask(frame, prefix = "") {
 const MENU = {
   keyboard: [
     [{ text: CARDS }, { text: FRAMES }],
-    [{ text: ADD_CHUNK }, { text: NOTES }],
-    [{ text: QUIZ }, { text: PROGRESS }],
+    [{ text: QUIZ }, { text: NOTES }],
     [{ text: NOTIFICATIONS }, { text: LESSONS_TAB }],
   ],
   resize_keyboard: true,
@@ -238,6 +236,7 @@ function badgesFor(p) {
   return badges;
 }
 
+// Короткий прогресс: вкладка «Занятия» показывает его первым.
 async function progressText(db, student) {
   const p = await db.progressRow(student.id);
   const badges = badgesFor(p);
@@ -245,10 +244,10 @@ async function progressText(db, student) {
     `🔥 Серия: ${p.streak} дн. (рекорд: ${p.best_streak})`,
     `🧩 Квиз: верно ${p.quiz_correct} из ${p.quiz_total}`,
     `🃏 Карточек пройдено: ${p.cards_done}`,
-    "",
-    "Бейджи:",
-    ...(badges.length ? badges.map((badge) => `• ${badge}`) : ["пока нет, но всё впереди! 🚀"]),
-  ].join("\n");
+    badges.length ? `🏅 Бейджи: ${badges.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 const PREPOSITIONS = ["to", "on", "in", "at", "for", "of", "with", "about", "from"];
@@ -953,6 +952,7 @@ export async function zeroBalanceText(db, studentId) {
 
 // Вкладка «Занятия» для студентки.
 async function studentLessonsText(env, db, student) {
+  const progress = await progressText(db, student);
   const balance = await db.balance(student.id);
   const slots = (await db.schedule(student.id))
     .map((slot) => `${DAY_NAMES[slot.weekday]} ${slot.time}`)
@@ -964,6 +964,7 @@ async function studentLessonsText(env, db, student) {
     .map((row) => `${lessonLabel(row.lesson_date, row.lesson_time)}: ${STATUS_LABELS[row.status]}`)
     .join("\n");
   return [
+    progress,
     `Оплаченных занятий осталось: ${balance}`,
     `Расписание: ${slots || "нет"}`,
     `Ближайшие уроки:\n${upcoming || "нет"}`,
@@ -1287,9 +1288,6 @@ async function onText(env, db, message) {
     await db.clearState(userId);
     await send(env, chatId, "Квиз из 10 вопросов запущен. Чтобы остановиться раньше, нажми любую кнопку меню.");
     await sendQuiz(env, db, chatId, student);
-  } else if (text === PROGRESS) {
-    await db.clearState(userId);
-    await send(env, chatId, await progressText(db, student));
   } else if (text === ADD_CHUNK) {
     await db.setState(userId, { awaiting: "chunk" });
     await send(env, chatId, STUDENT_ADD_FORMAT);
