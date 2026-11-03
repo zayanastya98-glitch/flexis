@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { Database, NOTIFY_BATCH } from "../src/db.js";
-import worker, { parseChunks } from "../src/index.js";
+import worker, { parseChunks, sendLessonReminders } from "../src/index.js";
 import { chunkKey, compareChunks, findDuplicatePairs } from "../src/similar.js";
 import { rememberTerms } from "../src/terms.js";
 import { fillFrames } from "../src/frames.js";
@@ -1282,4 +1282,46 @@ test("в задании фраза выделена жирным, а приме�
   const italic = entities.find((entity) => entity.type === "italic");
   assert.equal(text.slice(bold.offset, bold.offset + bold.length), "I used to...");
   assert.match(text.slice(italic.offset, italic.offset + italic.length), /ты видишь: I used to\.\.\./);
+});
+
+test("расписание, напоминание учительнице и списание занятий", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+
+  await say(env, TEACHER, "/schedule");
+  await press(env, TEACHER, `schedfor:${sonya.id}`);
+  await say(env, TEACHER, "вт 16:00");
+  const slots = (await db.schedule(sonya.id)).map((row) => ({ weekday: row.weekday, time: row.time }));
+  assert.deepEqual(slots, [{ weekday: 2, time: "16:00" }]);
+
+  await say(env, TEACHER, "/pay");
+  await press(env, TEACHER, `payfor:${sonya.id}`);
+  await say(env, TEACHER, "+2");
+  assert.equal(await db.balance(sonya.id), 2);
+
+  const now = { date: "2026-11-03", time: "15:55" };
+  await sendLessonReminders(env, db, now);
+  await sendLessonReminders(env, db, now);
+  const reminders = sent.filter((item) => item.body.text?.includes("Через 5 минут"));
+  assert.equal(reminders.length, 1, "напоминание уходит один раз");
+  assert.equal(reminders[0].body.chat_id, String(TEACHER));
+  assert.equal(await db.balance(sonya.id), 2, "без нажатия ничего не списывается");
+
+  await press(env, TEACHER, `lessonyes:${sonya.id}:2026-11-03:1600`);
+  assert.equal(await db.balance(sonya.id), 1);
+  await press(env, TEACHER, `lessonyes:${sonya.id}:2026-11-03:1600`);
+  assert.equal(await db.balance(sonya.id), 0);
+  assert.ok(
+    sent.some((item) => item.body.chat_id === STUDENT && item.body.text?.includes("закончились")),
+    "студентка получает сообщение про оплату",
+  );
+
+  await press(env, TEACHER, `lessonyes:${sonya.id}:2026-11-03:1600`);
+  assert.equal(await db.balance(sonya.id), 0);
+  assert.match(lastText(sent), /Не списано: баланс пуст/);
+
+  await press(env, TEACHER, `lessonno:${sonya.id}:2026-11-03:1600`);
+  const history = await db.lessonHistory(sonya.id);
+  assert.equal(history[0].status, "cancelled");
+  assert.equal(history[0].charged, 0);
 });

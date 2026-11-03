@@ -6,6 +6,7 @@ import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
 import { fillFrames } from "./frames.js";
+import { DAY_NAMES, REMIND_BEFORE, dueReminders, parseSchedule } from "./lessons.js";
 
 const TERMS_RUN_LIMIT = 60;
 
@@ -85,6 +86,9 @@ const TEACHER_HELP =
   "/frames — написать начала фраз для заданий «Закончи фразу»\n" +
   "/frames redo — пересоздать начала, которые написал Claude\n" +
   "/preview — посмотреть задания любого студента, как их видит студентка\n" +
+  "/schedule — расписание уроков студента: день и время\n" +
+  "/pay — добавить оплаченные занятия студенту\n" +
+  "/balance — остаток занятий и последние уроки\n" +
   "/frames all — сбросить все начала и создать заново\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
@@ -103,6 +107,9 @@ const TEACHER_COMMANDS = [
   { command: "terms", description: "Определить термины для старой лексики" },
   { command: "frames", description: "Написать начала фраз для заданий" },
   { command: "preview", description: "Посмотреть задания студента" },
+  { command: "schedule", description: "Расписание уроков студента" },
+  { command: "pay", description: "Добавить оплаченные занятия" },
+  { command: "balance", description: "Баланс занятий и история уроков" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
@@ -638,6 +645,18 @@ async function onCommand(env, db, message, command, argument) {
     const prefix = command === "rename" ? "renamefor" : "delfor";
     const title = command === "rename" ? "Какого студента переименовать?" : "Какого студента удалить?";
     await send(env, chatId, title, await studentPicker(db, prefix, false));
+  } else if (command === "schedule" || command === "pay" || command === "balance") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Студентов пока нет: /addstudent Имя");
+      return;
+    }
+    const prefix = { schedule: "schedfor", pay: "payfor", balance: "balfor" }[command];
+    const title = {
+      schedule: "Чьё расписание?",
+      pay: "Кому добавить занятия?",
+      balance: "Чей баланс посмотреть?",
+    }[command];
+    await send(env, chatId, title, await studentPicker(db, prefix, false));
   } else if (command === "preview") {
     if (!(await db.students()).length) {
       await send(env, chatId, "Студентов пока нет: /addstudent Имя");
@@ -814,6 +833,48 @@ async function askNextFrame(env, db, chatId, userId, studentId) {
   if (!chunk) return false;
   await askFrame(env, db, chatId, userId, chunk);
   return true;
+}
+
+async function saveSchedule(env, db, message, state) {
+  const chatId = message.chat.id;
+  const text = message.text.trim();
+  const target = await db.student(state.scheduleFor);
+  if (!target) {
+    await db.clearState(message.from.id);
+    return;
+  }
+  if (text === "-") {
+    await db.setSchedule(target.id, []);
+    await db.clearState(message.from.id);
+    await send(env, chatId, `Расписание ${target.name} очищено.`);
+    return;
+  }
+  const slots = parseSchedule(text);
+  if (!slots) {
+    await send(env, chatId, "Не поняла. Пиши так: вт 16:00, пт 16:00");
+    return;
+  }
+  await db.setSchedule(target.id, slots);
+  await db.clearState(message.from.id);
+  const list = slots.map((slot) => `${DAY_NAMES[slot.weekday]} ${slot.time}`).join(", ");
+  await send(env, chatId, `Расписание ${target.name}: ${list}.`);
+}
+
+async function savePayment(env, db, message, state) {
+  const chatId = message.chat.id;
+  const target = await db.student(state.payFor);
+  const count = Number(message.text.trim().replace(/^\+/, ""));
+  if (!target) {
+    await db.clearState(message.from.id);
+    return;
+  }
+  if (!Number.isInteger(count) || count <= 0) {
+    await send(env, chatId, "Напиши число занятий, например: 8");
+    return;
+  }
+  await db.clearState(message.from.id);
+  const balance = await db.addPaid(target.id, count);
+  await send(env, chatId, `Добавлено ${count}. Баланс ${target.name}: ${balance}.`);
 }
 
 async function saveVocabulary(env, db, message, state) {
@@ -1043,6 +1104,15 @@ async function onText(env, db, message) {
     return;
   }
 
+  if (isTeacher(env, userId) && state.scheduleFor !== undefined) {
+    await saveSchedule(env, db, message, state);
+    return;
+  }
+  if (isTeacher(env, userId) && state.payFor !== undefined) {
+    await savePayment(env, db, message, state);
+    return;
+  }
+
   const student = await db.studentByTelegram(userId);
   if (!student) {
     const name = await db.linkStudent(text, userId);
@@ -1160,6 +1230,69 @@ async function onButton(env, db, query) {
   const userId = query.from.id;
   const [action, value, extra] = query.data.split(":");
   const id = Number(value);
+
+  // Напоминание об уроке: отметить проведён, отменён или перенесён.
+  if (action === "lessonyes" || action === "lessonno" || action === "lessonmove") {
+    if (!isTeacher(env, userId)) return;
+    const [, studentText, date, compact] = query.data.split(":");
+    const target = await db.student(Number(studentText));
+    if (!target) return;
+    const time = `${compact.slice(0, 2)}:${compact.slice(2)}`;
+    const status = { lessonyes: "held", lessonno: "cancelled", lessonmove: "moved" }[action];
+    const result = await db.markLesson(target.id, date, time, status);
+    const label = { held: "проведено", cancelled: "отменено", moved: "перенесено" }[status];
+    let charge = "Не списано.";
+    if (status === "held") {
+      charge = result.charged ? `Списано, осталось: ${result.balance}.` : "Не списано: баланс пуст.";
+    }
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `${target.name}, ${date} ${time}: ${label}. ${charge}`,
+    });
+    if (result.charged && result.balance === 0 && target.telegram_id) {
+      try {
+        await send(env, target.telegram_id, "Занятия на абонементе закончились. Напиши Насте по поводу оплаты.");
+      } catch (error) {
+        console.error("Не удалось написать студенту про оплату", error.message);
+      }
+    }
+    return;
+  }
+
+  if (action === "schedfor" || action === "payfor" || action === "balfor") {
+    if (!isTeacher(env, userId)) return;
+    const target = await db.student(id);
+    if (!target) return;
+    if (action === "schedfor") {
+      await db.setState(userId, { scheduleFor: target.id });
+      const current = (await db.schedule(target.id))
+        .map((slot) => `${DAY_NAMES[slot.weekday]} ${slot.time}`)
+        .join(", ");
+      await send(
+        env,
+        chatId,
+        `Расписание ${target.name} сейчас: ${current || "нет"}.\nНапиши новое, например: вт 16:00, пт 16:00. Чтобы очистить, напиши «-».`,
+      );
+    } else if (action === "payfor") {
+      await db.setState(userId, { payFor: target.id });
+      await send(env, chatId, `Сколько занятий добавить ${target.name}? Например: 8`);
+    } else {
+      const balance = await db.balance(target.id);
+      const slots = (await db.schedule(target.id))
+        .map((slot) => `${DAY_NAMES[slot.weekday]} ${slot.time}`)
+        .join(", ");
+      const history = (await db.lessonHistory(target.id, 10))
+        .map((row) => `${row.lesson_date} ${row.lesson_time}: ${row.status}${row.charged ? " (списано)" : ""}`)
+        .join("\n");
+      await send(
+        env,
+        chatId,
+        `${target.name}\nБаланс: ${balance}\nРасписание: ${slots || "нет"}\n\nПоследние уроки:\n${history || "пока нет"}`,
+      );
+    }
+    return;
+  }
 
   // Просмотр глазами студента: учительница выбирает, что показать.
   if (action === "previewfor") {
@@ -1520,6 +1653,23 @@ async function onUpdate(env, db, update) {
 }
 
 // ---------- Ежедневные уведомления ----------
+// Напоминание преподавательнице за REMIND_BEFORE минут до урока.
+export async function sendLessonReminders(env, db, now = clock(env)) {
+  if (!env.TEACHER_ID) return;
+  for (const slot of dueReminders(await db.allSlots(), now.date, now.time)) {
+    if (!(await db.claimReminder(slot.student_id, now.date, slot.time))) continue;
+    const compact = slot.time.replace(":", "");
+    const data = `${slot.student_id}:${now.date}:${compact}`;
+    await send(env, env.TEACHER_ID, `Через ${REMIND_BEFORE} минут урок: ${slot.name}, ${slot.time}. Будет?`, {
+      inline_keyboard: [
+        [inline("✅ Да, списать", `lessonyes:${data}`)],
+        [inline("❌ Нет", `lessonno:${data}`)],
+        [inline("🔁 Перенос", `lessonmove:${data}`)],
+      ],
+    });
+  }
+}
+
 async function sendNotifications(env, db) {
   const { date, time } = clock(env);
   for (const student of await db.studentsToNotify(time, date)) {
@@ -1626,6 +1776,8 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(openDb(env).then((db) => sendNotifications(env, db)));
+    ctx.waitUntil(
+      openDb(env).then((db) => Promise.all([sendNotifications(env, db), sendLessonReminders(env, db)])),
+    );
   },
 };

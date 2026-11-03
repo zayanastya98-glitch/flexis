@@ -84,6 +84,34 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS generated_frames (
     chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE
   )`,
+  // Расписание: день недели (0 — воскресенье) и время начала урока.
+  `CREATE TABLE IF NOT EXISTS lesson_slots (
+    id INTEGER PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    weekday INTEGER NOT NULL,
+    time TEXT NOT NULL
+  )`,
+  // История уроков: held — проведено, cancelled — отменено, moved — перенесено.
+  `CREATE TABLE IF NOT EXISTS lessons (
+    id INTEGER PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    lesson_date TEXT NOT NULL,
+    lesson_time TEXT NOT NULL,
+    status TEXT NOT NULL,
+    charged INTEGER NOT NULL DEFAULT 0
+  )`,
+  // Напоминания, которые уже отправлены: чтобы не слать одно и то же дважды.
+  `CREATE TABLE IF NOT EXISTS lesson_reminders (
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    lesson_date TEXT NOT NULL,
+    lesson_time TEXT NOT NULL,
+    PRIMARY KEY (student_id, lesson_date, lesson_time)
+  )`,
+  // Оплаченные занятия, которые ещё не списаны.
+  `CREATE TABLE IF NOT EXISTS student_billing (
+    student_id INTEGER PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
+    balance INTEGER NOT NULL DEFAULT 0
+  )`,
 ];
 
 function randomCode() {
@@ -168,6 +196,10 @@ export class Database {
       this.d1.prepare("DELETE FROM chunks WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM student_stats WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM student_progress WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM lesson_slots WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM lessons WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM lesson_reminders WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM student_billing WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM students WHERE id = ?").bind(id),
     ]);
   }
@@ -437,6 +469,85 @@ export class Database {
       chunks: chunks.total,
       answers: answers.total,
     };
+  }
+
+  // ---------- Расписание и абонемент ----------
+  async setSchedule(studentId, slots) {
+    await this.run("DELETE FROM lesson_slots WHERE student_id = ?", studentId);
+    if (!slots.length) return;
+    await this.d1.batch(
+      slots.map((slot) =>
+        this.d1
+          .prepare("INSERT INTO lesson_slots (student_id, weekday, time) VALUES (?, ?, ?)")
+          .bind(studentId, slot.weekday, slot.time),
+      ),
+    );
+  }
+
+  schedule(studentId) {
+    return this.many(
+      "SELECT weekday, time FROM lesson_slots WHERE student_id = ? ORDER BY weekday, time",
+      studentId,
+    );
+  }
+
+  allSlots() {
+    return this.many(
+      `SELECT lesson_slots.student_id, lesson_slots.weekday, lesson_slots.time, students.name
+       FROM lesson_slots JOIN students ON students.id = lesson_slots.student_id`,
+    );
+  }
+
+  async addPaid(studentId, count) {
+    await this.run(
+      `INSERT INTO student_billing (student_id, balance) VALUES (?, ?)
+       ON CONFLICT(student_id) DO UPDATE SET balance = balance + excluded.balance`,
+      studentId,
+      count,
+    );
+    return this.balance(studentId);
+  }
+
+  async balance(studentId) {
+    const row = await this.one("SELECT balance FROM student_billing WHERE student_id = ?", studentId);
+    return row ? row.balance : 0;
+  }
+
+  // Списывает занятие, только если урок проведён и на балансе есть хотя бы одно занятие.
+  async markLesson(studentId, date, time, status) {
+    let charged = false;
+    if (status === "held" && (await this.balance(studentId)) > 0) {
+      await this.run("UPDATE student_billing SET balance = balance - 1 WHERE student_id = ?", studentId);
+      charged = true;
+    }
+    await this.run(
+      "INSERT INTO lessons (student_id, lesson_date, lesson_time, status, charged) VALUES (?, ?, ?, ?, ?)",
+      studentId,
+      date,
+      time,
+      status,
+      charged ? 1 : 0,
+    );
+    return { charged, balance: await this.balance(studentId) };
+  }
+
+  lessonHistory(studentId, limit = 10) {
+    return this.many(
+      "SELECT * FROM lessons WHERE student_id = ? ORDER BY id DESC LIMIT ?",
+      studentId,
+      limit,
+    );
+  }
+
+  // true, если напоминание ещё не отправляли.
+  async claimReminder(studentId, date, time) {
+    const result = await this.run(
+      "INSERT OR IGNORE INTO lesson_reminders (student_id, lesson_date, lesson_time) VALUES (?, ?, ?)",
+      studentId,
+      date,
+      time,
+    );
+    return result.meta.changes > 0;
   }
 
   // ---------- Термины для словаря ----------
