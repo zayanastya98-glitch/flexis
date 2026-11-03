@@ -21,6 +21,7 @@ const TERMS_RUN_LIMIT = 60;
 
 const CARDS = "🃏 Карточки";
 const FRAMES = "✍️ Закончи фразу";
+const LESSONS_TAB = "📅 Занятия";
 const NOTIFICATIONS = "🔔 Уведомления";
 const ADD_CHUNK = "➕ Добавить чанк";
 const NOTES = "📝 Заметки";
@@ -59,7 +60,7 @@ const MENU = {
     [{ text: CARDS }, { text: FRAMES }],
     [{ text: ADD_CHUNK }, { text: NOTES }],
     [{ text: QUIZ }, { text: PROGRESS }],
-    [{ text: NOTIFICATIONS }],
+    [{ text: NOTIFICATIONS }, { text: LESSONS_TAB }],
   ],
   resize_keyboard: true,
 };
@@ -97,7 +98,7 @@ const TEACHER_HELP =
   "/preview — посмотреть задания любого студента, как их видит студентка\n" +
   "/schedule — расписание уроков студента: день и время\n" +
   "/pay — добавить оплаченные занятия студенту\n" +
-  "/balance — остаток занятий и последние уроки\n" +
+  "/profile — профиль студента: баланс, абонементы, статистика уроков\n" +
   "/lesson — отменить или перенести ближайший урок\n" +
   "/frames all — сбросить все начала и создать заново\n" +
   "/dupes — найти повторы в лексике студента\n" +
@@ -119,7 +120,7 @@ const TEACHER_COMMANDS = [
   { command: "preview", description: "Посмотреть задания студента" },
   { command: "schedule", description: "Расписание уроков студента" },
   { command: "pay", description: "Добавить оплаченные занятия" },
-  { command: "balance", description: "Баланс занятий и история уроков" },
+  { command: "profile", description: "Профиль студента: баланс и уроки" },
   { command: "lesson", description: "Отменить или перенести урок" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
@@ -662,16 +663,16 @@ async function onCommand(env, db, message, command, argument) {
       return;
     }
     await send(env, chatId, "Чей урок?", await studentPicker(db, "lessonfor", false));
-  } else if (command === "schedule" || command === "pay" || command === "balance") {
+  } else if (command === "schedule" || command === "pay" || command === "profile") {
     if (!(await db.students()).length) {
       await send(env, chatId, "Студентов пока нет: /addstudent Имя");
       return;
     }
-    const prefix = { schedule: "schedfor", pay: "payfor", balance: "balfor" }[command];
+    const prefix = { schedule: "schedfor", pay: "payfor", profile: "profilefor" }[command];
     const title = {
       schedule: "Чьё расписание?",
       pay: "Кому добавить занятия?",
-      balance: "Чей баланс посмотреть?",
+      profile: "Чей профиль посмотреть?",
     }[command];
     await send(env, chatId, title, await studentPicker(db, prefix, false));
   } else if (command === "preview") {
@@ -890,8 +891,84 @@ async function savePayment(env, db, message, state) {
     return;
   }
   await db.clearState(message.from.id);
-  const balance = await db.addPaid(target.id, count);
+  const balance = await db.addPaid(target.id, count, clock(env).date);
   await send(env, chatId, `Добавлено ${count}. Баланс ${target.name}: ${balance}.`);
+}
+
+const STATUS_LABELS = { held: "проведено", cancelled: "отменено", moved: "перенесено" };
+
+// Ближайшие уроки на 2 недели, с перенесёнными и без уже отмеченных.
+async function upcomingLessons(env, db, studentId, limit = 10) {
+  const today = clock(env).date;
+  const taken = new Set(
+    (await db.lessonsFrom(studentId, today)).map((row) => `${row.lesson_date} ${row.lesson_time}`),
+  );
+  const planned = (await db.plannedFrom(studentId, today)).map((row) => ({
+    date: row.lesson_date,
+    time: row.lesson_time,
+  }));
+  return [...upcomingOccurrences(await db.schedule(studentId), today, 14), ...planned]
+    .filter((item) => !taken.has(`${item.date} ${item.time}`))
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+    .slice(0, limit);
+}
+
+// Профиль для преподавательницы.
+async function profileText(db, student) {
+  const balance = await db.balance(student.id);
+  const report = await db.subscriptionsReport(student.id);
+  const counts = await db.statusCounts(student.id);
+  const slots = (await db.schedule(student.id))
+    .map((slot) => `${DAY_NAMES[slot.weekday]} ${slot.time}`)
+    .join(", ");
+  const current = report.current
+    ? `Текущий абонемент: использовано ${report.current.used} из ${report.current.paid}`
+    : "Текущего абонемента нет";
+  const closed = report.closed
+    .map((sub, index) => `Абонемент ${index + 1}: посещено ${sub.paid} из ${sub.paid}`)
+    .join("\n");
+  const history = (await db.lessonHistory(student.id, 10))
+    .map((row) => `${lessonLabel(row.lesson_date, row.lesson_time)}: ${STATUS_LABELS[row.status]}${row.charged ? " (списано)" : ""}`)
+    .join("\n");
+  return [
+    student.name,
+    `Баланс: ${balance}`,
+    current,
+    closed || null,
+    `Проведено: ${counts.held || 0}, отменено: ${counts.cancelled || 0}, перенесено: ${counts.moved || 0}`,
+    `Расписание: ${slots || "нет"}`,
+    `Последние уроки:\n${history || "пока нет"}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// Текст, когда занятия на абонементе закончились.
+export async function zeroBalanceText(db, studentId) {
+  const report = await db.subscriptionsReport(studentId);
+  const last = report.closed.at(-1);
+  const finished = last ? `В прошлом абонементе посещено ${last.paid} из ${last.paid}. Так держать! ` : "";
+  return `Занятия на абонементе закончились. ${finished}После оплаты напиши Насте или сюда :)`;
+}
+
+// Вкладка «Занятия» для студентки.
+async function studentLessonsText(env, db, student) {
+  const balance = await db.balance(student.id);
+  const slots = (await db.schedule(student.id))
+    .map((slot) => `${DAY_NAMES[slot.weekday]} ${slot.time}`)
+    .join(", ");
+  const upcoming = (await upcomingLessons(env, db, student.id, 3))
+    .map((item) => lessonLabel(item.date, item.time))
+    .join("\n");
+  const history = (await db.lessonHistory(student.id, 5))
+    .map((row) => `${lessonLabel(row.lesson_date, row.lesson_time)}: ${STATUS_LABELS[row.status]}`)
+    .join("\n");
+  return [
+    `Оплаченных занятий осталось: ${balance}`,
+    `Расписание: ${slots || "нет"}`,
+    `Ближайшие уроки:\n${upcoming || "нет"}`,
+    `Последние уроки:\n${history || "пока нет"}`,
+  ].join("\n\n");
 }
 
 async function saveMove(env, db, message, state) {
@@ -1182,6 +1259,9 @@ async function onText(env, db, message) {
     } else {
       await send(env, chatId, "Заданий пока нет.");
     }
+  } else if (text === LESSONS_TAB) {
+    await db.clearState(userId);
+    await send(env, chatId, await studentLessonsText(env, db, student), MENU);
   } else if (text === NOTIFICATIONS) {
     await db.clearState(userId);
     await send(
@@ -1376,7 +1456,7 @@ async function onButton(env, db, query) {
     });
     if (result.charged && result.balance === 0 && target.telegram_id) {
       try {
-        await send(env, target.telegram_id, "Занятия на абонементе закончились. Напиши Насте по поводу оплаты.");
+        await send(env, target.telegram_id, await zeroBalanceText(db, target.id));
       } catch (error) {
         console.error("Не удалось написать студенту про оплату", error.message);
       }
@@ -1384,7 +1464,7 @@ async function onButton(env, db, query) {
     return;
   }
 
-  if (action === "schedfor" || action === "payfor" || action === "balfor") {
+  if (action === "schedfor" || action === "payfor" || action === "profilefor") {
     if (!isTeacher(env, userId)) return;
     const target = await db.student(id);
     if (!target) return;
@@ -1402,18 +1482,7 @@ async function onButton(env, db, query) {
       await db.setState(userId, { payFor: target.id });
       await send(env, chatId, `Сколько занятий добавить ${target.name}? Например: 8`);
     } else {
-      const balance = await db.balance(target.id);
-      const slots = (await db.schedule(target.id))
-        .map((slot) => `${DAY_NAMES[slot.weekday]} ${slot.time}`)
-        .join(", ");
-      const history = (await db.lessonHistory(target.id, 10))
-        .map((row) => `${row.lesson_date} ${row.lesson_time}: ${row.status}${row.charged ? " (списано)" : ""}`)
-        .join("\n");
-      await send(
-        env,
-        chatId,
-        `${target.name}\nБаланс: ${balance}\nРасписание: ${slots || "нет"}\n\nПоследние уроки:\n${history || "пока нет"}`,
-      );
+      await send(env, chatId, await profileText(db, target));
     }
     return;
   }

@@ -112,6 +112,13 @@ const SCHEMA = [
     student_id INTEGER PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
     balance INTEGER NOT NULL DEFAULT 0
   )`,
+  // Абонементы: каждое пополнение. Занятия списываются с самого раннего незакрытого абонемента.
+  `CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    paid INTEGER NOT NULL,
+    created TEXT NOT NULL
+  )`,
   // Разовые уроки: перенесённые занятия, которых нет в обычном расписании.
   `CREATE TABLE IF NOT EXISTS planned_lessons (
     id INTEGER PRIMARY KEY,
@@ -208,6 +215,7 @@ export class Database {
       this.d1.prepare("DELETE FROM lesson_reminders WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM student_billing WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM planned_lessons WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM subscriptions WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM students WHERE id = ?").bind(id),
     ]);
   }
@@ -506,7 +514,13 @@ export class Database {
     );
   }
 
-  async addPaid(studentId, count) {
+  async addPaid(studentId, count, date) {
+    await this.run(
+      "INSERT INTO subscriptions (student_id, paid, created) VALUES (?, ?, ?)",
+      studentId,
+      count,
+      date,
+    );
     await this.run(
       `INSERT INTO student_billing (student_id, balance) VALUES (?, ?)
        ON CONFLICT(student_id) DO UPDATE SET balance = balance + excluded.balance`,
@@ -574,6 +588,42 @@ export class Database {
       studentId,
       fromDate,
     );
+  }
+
+  // Закрытые абонементы (все занятия проведены) и текущий, с количеством использованных занятий.
+  async subscriptionsReport(studentId) {
+    const subs = await this.many(
+      "SELECT paid FROM subscriptions WHERE student_id = ? ORDER BY id",
+      studentId,
+    );
+    const row = await this.one(
+      "SELECT COUNT(*) AS total FROM lessons WHERE student_id = ? AND charged = 1",
+      studentId,
+    );
+    const charged = row ? row.total : 0;
+    const closed = [];
+    let current = null;
+    let start = 0;
+    for (const sub of subs) {
+      const end = start + sub.paid;
+      if (end <= charged) {
+        closed.push({ paid: sub.paid });
+      } else {
+        current = { paid: sub.paid, used: Math.max(0, charged - start) };
+        break;
+      }
+      start = end;
+    }
+    return { closed, current };
+  }
+
+  // Сколько уроков каждого статуса: held, cancelled, moved.
+  async statusCounts(studentId) {
+    const rows = await this.many(
+      "SELECT status, COUNT(*) AS total FROM lessons WHERE student_id = ? GROUP BY status",
+      studentId,
+    );
+    return Object.fromEntries(rows.map((row) => [row.status, row.total]));
   }
 
   lessonHistory(studentId, limit = 10) {

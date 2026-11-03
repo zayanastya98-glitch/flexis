@@ -1330,7 +1330,7 @@ test("отмена заранее и перенос урока с напомин
   const { env, sent } = await environment();
   const { db, sonya } = await studentWithFrame(env);
   await db.setSchedule(sonya.id, [{ weekday: 2, time: "16:00" }]);
-  await db.addPaid(sonya.id, 3);
+  await db.addPaid(sonya.id, 3, DAY);
 
   await say(env, TEACHER, "/lesson");
   await press(env, TEACHER, `lessonfor:${sonya.id}`);
@@ -1356,3 +1356,34 @@ test("отмена заранее и перенос урока с напомин
   assert.ok(!sent.some((item) => item.body.text?.includes("Через 5 минут урок") && item.body.text?.includes("16:00")), "отменённый урок не напоминает");
   assert.equal(await db.balance(sonya.id), 3);
 });
+
+test("профиль, статистика абонемента и вкладка «Занятия» у студентки", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.setSchedule(sonya.id, [{ weekday: 2, time: "16:00" }]);
+  await db.addPaid(sonya.id, 2, DAY);
+
+  await db.markLesson(sonya.id, "2026-10-27", "16:00", "held");
+  await db.markLesson(sonya.id, "2026-11-03", "16:00", "held");
+  await db.markLesson(sonya.id, "2026-10-20", "16:00", "cancelled");
+
+  const message = await zeroBalanceFor(env, db, sonya.id);
+  assert.match(message, /В прошлом абонементе посещено 2 из 2\. Так держать!/);
+  assert.match(message, /После оплаты напиши Насте или сюда/);
+  assert.doesNotMatch(message, /по поводу оплаты/);
+
+  await say(env, TEACHER, "/profile");
+  await press(env, TEACHER, `profilefor:${sonya.id}`);
+  assert.match(lastText(sent), /Абонемент 1: посещено 2 из 2/);
+  assert.match(lastText(sent), /Проведено: 2, отменено: 1/);
+
+  await say(env, STUDENT, "📅 Занятия");
+  assert.match(lastText(sent), /Оплаченных занятий осталось: 0/);
+  assert.match(lastText(sent), /Расписание: вт 16:00/);
+});
+
+// Текст при нулевом балансе, как его отправляет бот.
+async function zeroBalanceFor(env, db, studentId) {
+  const { zeroBalanceText } = await import("../src/index.js");
+  return zeroBalanceText(db, studentId);
+}
