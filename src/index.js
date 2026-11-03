@@ -6,7 +6,16 @@ import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
 import { fillFrames } from "./frames.js";
-import { DAY_NAMES, REMIND_BEFORE, dueReminders, parseSchedule } from "./lessons.js";
+import {
+  DAY_NAMES,
+  REMIND_BEFORE,
+  dueReminders,
+  inReminderWindow,
+  lessonLabel,
+  parseMove,
+  parseSchedule,
+  upcomingOccurrences,
+} from "./lessons.js";
 
 const TERMS_RUN_LIMIT = 60;
 
@@ -89,6 +98,7 @@ const TEACHER_HELP =
   "/schedule — расписание уроков студента: день и время\n" +
   "/pay — добавить оплаченные занятия студенту\n" +
   "/balance — остаток занятий и последние уроки\n" +
+  "/lesson — отменить или перенести ближайший урок\n" +
   "/frames all — сбросить все начала и создать заново\n" +
   "/dupes — найти повторы в лексике студента\n" +
   "/reset — обнулить прогресс студента\n" +
@@ -110,6 +120,7 @@ const TEACHER_COMMANDS = [
   { command: "schedule", description: "Расписание уроков студента" },
   { command: "pay", description: "Добавить оплаченные занятия" },
   { command: "balance", description: "Баланс занятий и история уроков" },
+  { command: "lesson", description: "Отменить или перенести урок" },
   { command: "addstudent", description: "Создать студента: /addstudent Имя" },
   { command: "students", description: "Студенты и их ID" },
   { command: "list", description: "Лексика студента" },
@@ -645,6 +656,12 @@ async function onCommand(env, db, message, command, argument) {
     const prefix = command === "rename" ? "renamefor" : "delfor";
     const title = command === "rename" ? "Какого студента переименовать?" : "Какого студента удалить?";
     await send(env, chatId, title, await studentPicker(db, prefix, false));
+  } else if (command === "lesson") {
+    if (!(await db.students()).length) {
+      await send(env, chatId, "Студентов пока нет: /addstudent Имя");
+      return;
+    }
+    await send(env, chatId, "Чей урок?", await studentPicker(db, "lessonfor", false));
   } else if (command === "schedule" || command === "pay" || command === "balance") {
     if (!(await db.students()).length) {
       await send(env, chatId, "Студентов пока нет: /addstudent Имя");
@@ -875,6 +892,30 @@ async function savePayment(env, db, message, state) {
   await db.clearState(message.from.id);
   const balance = await db.addPaid(target.id, count);
   await send(env, chatId, `Добавлено ${count}. Баланс ${target.name}: ${balance}.`);
+}
+
+async function saveMove(env, db, message, state) {
+  const chatId = message.chat.id;
+  const { studentId, date, time } = state.moveFor;
+  const target = await db.student(studentId);
+  if (!target) {
+    await db.clearState(message.from.id);
+    return;
+  }
+  const next = parseMove(message.text, clock(env).date.slice(0, 4));
+  if (!next) {
+    await send(env, chatId, "Не поняла. Пиши так: 05.11 18:00");
+    return;
+  }
+  await db.clearState(message.from.id);
+  await db.markLesson(studentId, date, time, "moved");
+  await db.claimReminder(studentId, date, time);
+  await db.addPlanned(studentId, next.date, next.time);
+  await send(
+    env,
+    chatId,
+    `${target.name}: ${lessonLabel(date, time)} перенесён на ${lessonLabel(next.date, next.time)}. Напомню перед уроком.`,
+  );
 }
 
 async function saveVocabulary(env, db, message, state) {
@@ -1108,6 +1149,10 @@ async function onText(env, db, message) {
     await saveSchedule(env, db, message, state);
     return;
   }
+  if (isTeacher(env, userId) && state.moveFor !== undefined) {
+    await saveMove(env, db, message, state);
+    return;
+  }
   if (isTeacher(env, userId) && state.payFor !== undefined) {
     await savePayment(env, db, message, state);
     return;
@@ -1231,14 +1276,93 @@ async function onButton(env, db, query) {
   const [action, value, extra] = query.data.split(":");
   const id = Number(value);
 
-  // Напоминание об уроке: отметить проведён, отменён или перенесён.
-  if (action === "lessonyes" || action === "lessonno" || action === "lessonmove") {
+  // Ближайшие уроки студентки: выбрать один из них.
+  if (action === "lessonfor") {
+    if (!isTeacher(env, userId)) return;
+    const target = await db.student(id);
+    if (!target) return;
+    const today = clock(env).date;
+    const taken = new Set(
+      (await db.lessonsFrom(target.id, today)).map((row) => `${row.lesson_date} ${row.lesson_time}`),
+    );
+    const planned = (await db.plannedFrom(target.id, today)).map((row) => ({
+      date: row.lesson_date,
+      time: row.lesson_time,
+    }));
+    const upcoming = [...upcomingOccurrences(await db.schedule(target.id), today, 14), ...planned]
+      .filter((item) => !taken.has(`${item.date} ${item.time}`))
+      .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
+      .slice(0, 10);
+    if (!upcoming.length) {
+      await send(env, chatId, `У ${target.name} нет ближайших уроков.`);
+      return;
+    }
+    await send(env, chatId, `Какой урок у ${target.name}?`, {
+      inline_keyboard: upcoming.map((item) => [
+        inline(lessonLabel(item.date, item.time), `lessonpick:${target.id}:${item.date}:${item.time.replace(":", "")}`),
+      ]),
+    });
+    return;
+  }
+
+  // Что сделать с выбранным уроком: отменить или перенести.
+  if (action === "lessonpick") {
     if (!isTeacher(env, userId)) return;
     const [, studentText, date, compact] = query.data.split(":");
     const target = await db.student(Number(studentText));
     if (!target) return;
     const time = `${compact.slice(0, 2)}:${compact.slice(2)}`;
-    const status = { lessonyes: "held", lessonno: "cancelled", lessonmove: "moved" }[action];
+    const data = `${target.id}:${date}:${compact}`;
+    await send(env, chatId, `${target.name}, ${lessonLabel(date, time)}. Что сделать?`, {
+      inline_keyboard: [
+        [inline("❌ Отменить урок", `lessonskip:${data}`)],
+        [inline("🔁 Перенести", `lessonmove:${data}`)],
+      ],
+    });
+    return;
+  }
+
+  // Отмена заранее: урок не списывается и напоминания по нему не будет.
+  if (action === "lessonskip") {
+    if (!isTeacher(env, userId)) return;
+    const [, studentText, date, compact] = query.data.split(":");
+    const target = await db.student(Number(studentText));
+    if (!target) return;
+    const time = `${compact.slice(0, 2)}:${compact.slice(2)}`;
+    await db.markLesson(target.id, date, time, "cancelled");
+    await db.claimReminder(target.id, date, time);
+    await telegram(env, "editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: `${target.name}, ${lessonLabel(date, time)}: отменено. Не списано.`,
+    });
+    return;
+  }
+
+  // Перенос: спрашиваем новую дату и время. Старый урок отмечается, когда новая дата введена.
+  if (action === "lessonmove") {
+    if (!isTeacher(env, userId)) return;
+    const [, studentText, date, compact] = query.data.split(":");
+    const target = await db.student(Number(studentText));
+    if (!target) return;
+    const time = `${compact.slice(0, 2)}:${compact.slice(2)}`;
+    await db.setState(userId, { moveFor: { studentId: target.id, date, time } });
+    await send(
+      env,
+      chatId,
+      `Перенос ${target.name} с ${lessonLabel(date, time)}. На какую дату и время? Например: 05.11 18:00`,
+    );
+    return;
+  }
+
+  // Напоминание об уроке: отметить проведён, отменён или перенесён.
+  if (action === "lessonyes" || action === "lessonno") {
+    if (!isTeacher(env, userId)) return;
+    const [, studentText, date, compact] = query.data.split(":");
+    const target = await db.student(Number(studentText));
+    if (!target) return;
+    const time = `${compact.slice(0, 2)}:${compact.slice(2)}`;
+    const status = { lessonyes: "held", lessonno: "cancelled" }[action];
     const result = await db.markLesson(target.id, date, time, status);
     const label = { held: "проведено", cancelled: "отменено", moved: "перенесено" }[status];
     let charge = "Не списано.";
@@ -1656,7 +1780,13 @@ async function onUpdate(env, db, update) {
 // Напоминание преподавательнице за REMIND_BEFORE минут до урока.
 export async function sendLessonReminders(env, db, now = clock(env)) {
   if (!env.TEACHER_ID) return;
-  for (const slot of dueReminders(await db.allSlots(), now.date, now.time)) {
+  const due = [
+    ...dueReminders(await db.allSlots(), now.date, now.time),
+    ...(await db.plannedOn(now.date))
+      .filter((plan) => inReminderWindow(plan.lesson_time, now.time))
+      .map((plan) => ({ student_id: plan.student_id, name: plan.name, time: plan.lesson_time })),
+  ];
+  for (const slot of due) {
     if (!(await db.claimReminder(slot.student_id, now.date, slot.time))) continue;
     const compact = slot.time.replace(":", "");
     const data = `${slot.student_id}:${now.date}:${compact}`;

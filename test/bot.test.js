@@ -1325,3 +1325,34 @@ test("расписание, напоминание учительнице и с�
   assert.equal(history[0].status, "cancelled");
   assert.equal(history[0].charged, 0);
 });
+
+test("отмена заранее и перенос урока с напоминанием на новую дату", async () => {
+  const { env, sent } = await environment();
+  const { db, sonya } = await studentWithFrame(env);
+  await db.setSchedule(sonya.id, [{ weekday: 2, time: "16:00" }]);
+  await db.addPaid(sonya.id, 3);
+
+  await say(env, TEACHER, "/lesson");
+  await press(env, TEACHER, `lessonfor:${sonya.id}`);
+  const picker = sent.findLast((item) => item.body.text?.includes("Какой урок"));
+  assert.ok(picker, "список ближайших уроков показан");
+
+  await press(env, TEACHER, `lessonpick:${sonya.id}:2026-11-03:1600`);
+  await press(env, TEACHER, `lessonmove:${sonya.id}:2026-11-03:1600`);
+  await say(env, TEACHER, "05.11 18:00");
+  assert.match(lastText(sent), /перенесён на 05\.11/);
+  assert.equal((await db.plannedFrom(sonya.id, "2026-11-01")).length, 1);
+  assert.equal(await db.balance(sonya.id), 3, "перенос не списывает занятие");
+
+  await sendLessonReminders(env, db, { date: "2026-11-05", time: "17:55" });
+  assert.ok(
+    sent.some((item) => item.body.text?.includes("Через 5 минут урок") && item.body.text?.includes("18:00")),
+    "напоминание приходит за 5 минут до перенесённого урока",
+  );
+
+  await press(env, TEACHER, `lessonskip:${sonya.id}:2026-11-10:1600`);
+  assert.match(lastText(sent), /отменено. Не списано/);
+  await sendLessonReminders(env, db, { date: "2026-11-10", time: "15:55" });
+  assert.ok(!sent.some((item) => item.body.text?.includes("Через 5 минут урок") && item.body.text?.includes("16:00")), "отменённый урок не напоминает");
+  assert.equal(await db.balance(sonya.id), 3);
+});

@@ -112,6 +112,13 @@ const SCHEMA = [
     student_id INTEGER PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
     balance INTEGER NOT NULL DEFAULT 0
   )`,
+  // Разовые уроки: перенесённые занятия, которых нет в обычном расписании.
+  `CREATE TABLE IF NOT EXISTS planned_lessons (
+    id INTEGER PRIMARY KEY,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    lesson_date TEXT NOT NULL,
+    lesson_time TEXT NOT NULL
+  )`,
 ];
 
 function randomCode() {
@@ -200,6 +207,7 @@ export class Database {
       this.d1.prepare("DELETE FROM lessons WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM lesson_reminders WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM student_billing WHERE student_id = ?").bind(id),
+      this.d1.prepare("DELETE FROM planned_lessons WHERE student_id = ?").bind(id),
       this.d1.prepare("DELETE FROM students WHERE id = ?").bind(id),
     ]);
   }
@@ -529,6 +537,43 @@ export class Database {
       charged ? 1 : 0,
     );
     return { charged, balance: await this.balance(studentId) };
+  }
+
+  addPlanned(studentId, date, time) {
+    return this.run(
+      "INSERT INTO planned_lessons (student_id, lesson_date, lesson_time) VALUES (?, ?, ?)",
+      studentId,
+      date,
+      time,
+    );
+  }
+
+  // Разовые уроки студентки начиная с даты.
+  plannedFrom(studentId, fromDate) {
+    return this.many(
+      "SELECT lesson_date, lesson_time FROM planned_lessons WHERE student_id = ? AND lesson_date >= ?",
+      studentId,
+      fromDate,
+    );
+  }
+
+  // Разовые уроки на дату, для напоминаний.
+  plannedOn(date) {
+    return this.many(
+      `SELECT planned_lessons.student_id, planned_lessons.lesson_time, students.name
+       FROM planned_lessons JOIN students ON students.id = planned_lessons.student_id
+       WHERE planned_lessons.lesson_date = ?`,
+      date,
+    );
+  }
+
+  // Уроки, по которым уже есть отметка (проведён, отменён или перенесён), начиная с даты.
+  lessonsFrom(studentId, fromDate) {
+    return this.many(
+      "SELECT lesson_date, lesson_time FROM lessons WHERE student_id = ? AND lesson_date >= ?",
+      studentId,
+      fromDate,
+    );
   }
 
   lessonHistory(studentId, limit = 10) {
