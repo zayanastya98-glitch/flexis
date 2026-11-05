@@ -836,7 +836,7 @@ async function sendCard(env, db, chatId, student, number = 1) {
 }
 
 async function askFrame(env, db, chatId, userId, chunk) {
-  await db.setState(userId, { awaiting: "frame", frame: chunk.frame });
+  await db.setState(userId, { awaiting: "frame", frame: chunk.frame, chunk: chunk.text });
   const task = frameTask(chunk.frame);
   await send(
     env,
@@ -1108,7 +1108,7 @@ async function saveAnswer(env, db, message, student, state, text) {
   await db.clearState(message.from.id);
   let feedback = null;
   if ((await db.answersLastDay(student.id)) <= MAX_AI_CHECKS_PER_DAY) {
-    feedback = await checkAnswer(env, state.frame, text);
+    feedback = await checkAnswer(env, state.frame, text, state.chunk);
   }
   if (feedback) {
     await send(env, message.chat.id, `🤖 Автопроверка\n\n${feedback}`);
