@@ -1834,11 +1834,16 @@ async function onButton(env, db, query) {
       return;
     }
     const help = await helpFrame(env, state.frame, state.chunk);
-    await send(
-      env,
-      chatId,
-      help ? `💡 Пример:\n${help.en}\n\nПеревод: ${help.ru}` : "Помощь сейчас недоступна, попробуй сама 🙂",
-    );
+    if (!help) {
+      await send(env, chatId, "Помощь сейчас недоступна, попробуй сама 🙂");
+      return;
+    }
+    const head = "💡 Пример:\n";
+    const text = `${head}${help.en}\n\nПеревод: ${help.ru}\n\nТеперь попробуй свой пример.`;
+    // Целевой чанк в примере выделяем жирным.
+    const at = state.chunk ? help.en.toLowerCase().indexOf(state.chunk.toLowerCase()) : -1;
+    const entities = at >= 0 ? [{ type: "bold", offset: head.length + at, length: state.chunk.length }] : undefined;
+    await send(env, chatId, text, null, entities);
   }
 }
 
