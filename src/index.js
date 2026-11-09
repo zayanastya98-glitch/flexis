@@ -1,7 +1,7 @@
 // Telegram-бот для отработки чанков на Cloudflare Workers.
 // Настройка описана в README.md.
 import { Database } from "./db.js";
-import { checkAnswer, parseBold } from "./feedback.js";
+import { checkAnswer, helpFrame, parseBold } from "./feedback.js";
 import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
@@ -842,7 +842,7 @@ async function askFrame(env, db, chatId, userId, chunk) {
     env,
     chatId,
     task.text,
-    { inline_keyboard: [[inline("➡️ Следующая фраза", "nextframe")]] },
+    { inline_keyboard: [[inline("💡 Помощь", "framehelp"), inline("➡️ Следующая фраза", "nextframe")]] },
     task.entities,
   );
 }
@@ -1827,6 +1827,18 @@ async function onButton(env, db, query) {
     }
   } else if (action === "nextframe") {
     await askNextFrame(env, db, chatId, userId, student.id);
+  } else if (action === "framehelp") {
+    const state = await db.getState(userId);
+    if (state.awaiting !== "frame" || !state.frame) {
+      await send(env, chatId, "Помощь доступна, пока открыто задание.");
+      return;
+    }
+    const help = await helpFrame(env, state.frame, state.chunk);
+    await send(
+      env,
+      chatId,
+      help ? `💡 Пример:\n${help.en}\n\nПеревод: ${help.ru}` : "Помощь сейчас недоступна, попробуй сама 🙂",
+    );
   }
 }
 
