@@ -1416,3 +1416,10 @@ test("раз в неделю по воскресеньям в 18:00 у всех,
   await sendWeeklyReminders(env, db, { date: "2026-11-15", time: "18:00" });
   assert.equal(weekly().length, 1);
 });
+
+test("звёздочки в проверке превращаются в жирный шрифт", async () => {
+  const { parseBold } = await import("../src/feedback.js");
+  const result = parseBold("Лучше так: *Watching* cringe TV shows.");
+  assert.equal(result.text, "Лучше так: Watching cringe TV shows.");
+  assert.deepEqual(result.bold, [{ offset: 11, length: 8 }]);
+});

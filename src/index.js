@@ -1,7 +1,7 @@
 // Telegram-бот для отработки чанков на Cloudflare Workers.
 // Настройка описана в README.md.
 import { Database } from "./db.js";
-import { checkAnswer } from "./feedback.js";
+import { checkAnswer, parseBold } from "./feedback.js";
 import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
@@ -1111,7 +1111,14 @@ async function saveAnswer(env, db, message, student, state, text) {
     feedback = await checkAnswer(env, state.frame, text, state.chunk);
   }
   if (feedback) {
-    await send(env, message.chat.id, `🤖 Автопроверка\n\n${feedback}`);
+    const prefix = "🤖 Автопроверка\n\n";
+    const marked = parseBold(feedback);
+    const entities = marked.bold.map((item) => ({
+      type: "bold",
+      offset: item.offset + prefix.length,
+      length: item.length,
+    }));
+    await send(env, message.chat.id, prefix + marked.text, null, entities);
   }
   await askNextFrame(env, db, message.chat.id, message.from.id, student.id);
   if (env.TEACHER_ID) {
