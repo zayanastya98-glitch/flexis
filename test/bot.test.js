@@ -220,7 +220,7 @@ test("полный сценарий: преподаватель и студен�
   assert.match(lastText(sent), /Такого ID нет/);
 
   await say(env, STUDENT, code);
-  assert.match(lastText(sent), /^Привет, Анна Мария! 🙌/);
+  assert.match(lastText(sent), /^Привет, Анна Мария :\) Надеюсь/);
   assert.ok(sent.at(-1).body.reply_markup.keyboard);
 
   await say(env, STUDENT, "🃏 Карточки");
