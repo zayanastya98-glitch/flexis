@@ -220,7 +220,7 @@ test("полный сценарий: преподаватель и студен�
   assert.match(lastText(sent), /Такого ID нет/);
 
   await say(env, STUDENT, code);
-  assert.match(lastText(sent), /^Привеет, Анна Мария :\) Надеюсь/);
+  assert.match(lastText(sent), /^Привет, Анна Мария! 🙌/);
   assert.ok(sent.at(-1).body.reply_markup.keyboard);
 
   await say(env, STUDENT, "🃏 Карточки");
@@ -339,7 +339,7 @@ test("выход освобождает ID и позволяет войти др
   // Настоящий студент теперь может войти под этим ID.
   await say(env, STUDENT, sonya.code);
   assert.equal((await db.student(sonya.id)).telegram_id, STUDENT);
-  assert.match(lastText(sent), /^Привеет/);
+  assert.match(lastText(sent), /^Привет,/);
 });
 
 test("заметка с урока приходит студенту и хранится", async () => {
