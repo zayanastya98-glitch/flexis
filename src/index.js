@@ -1031,6 +1031,7 @@ async function saveVocabulary(env, db, message, state) {
       await db.addChunks([student.id], fresh, today);
       await rememberTerms(env, db, fresh.map((row) => row[0]));
       await fillFrames(env, db, fresh.filter((row) => !row[3]).map(([text, translation, example]) => ({ text, translation, example })));
+      await notifyNewVocabulary(env, student, fresh);
     }
     added += fresh.length;
     skipped += duplicates.length;
@@ -1047,6 +1048,18 @@ async function saveVocabulary(env, db, message, state) {
   if (skipped) header.push(`Пропущено повторов: ${skipped}.`);
   const details = lines.length ? `\n\n${lines.join("\n")}` : "";
   await send(env, message.chat.id, `${header.join("\n")}${details}`.slice(0, 4000));
+}
+
+// Студентка получает список новой лексики сразу после того, как Настя её добавила.
+async function notifyNewVocabulary(env, student, rows) {
+  if (!student.telegram_id) return;
+  const list = rows.map(([text]) => `• ${text}`).join("\n");
+  const text = `Тебе добавили новую лексику, заходи практиковаться:\n\n${list}`.slice(0, 4000);
+  try {
+    await send(env, student.telegram_id, text, MENU);
+  } catch (error) {
+    console.error(`Не удалось уведомить студентку ${student.id} о лексике`, error.message);
+  }
 }
 
 function similarLabel(chunk) {
