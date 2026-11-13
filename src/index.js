@@ -1144,9 +1144,16 @@ async function saveAnswer(env, db, message, student, state, text) {
   if (env.TEACHER_ID) {
     try {
       const report = `${student.name}\n${state.frame}\n→ ${text}`;
-      await send(env, env.TEACHER_ID, feedback ? `${report}\n\n🤖 ${feedback}` : report, {
+      const head = feedback ? `${report}\n\n🤖 ` : report;
+      const marked = feedback ? parseBold(feedback) : { text: "", bold: [] };
+      const entities = marked.bold.map((item) => ({
+        type: "bold",
+        offset: head.length + item.offset,
+        length: item.length,
+      }));
+      await send(env, env.TEACHER_ID, head + marked.text, {
         inline_keyboard: [[inline("Ответить", `replyto:${student.id}`)]],
-      });
+      }, entities);
     } catch (error) {
       console.error("Не удалось переслать ответ преподавателю", error.message);
     }
