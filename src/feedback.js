@@ -133,6 +133,7 @@ export async function extractChunk(env, phrase) {
         max_tokens: 1500,
         system: `You turn an English phrase or sentence that an adult learner liked into one vocabulary item (a chunk).
 Pick the most useful chunk: a fixed or semi-fixed group of words (collocation, phrasal verb, set phrase, lexical phrase), not a single common word. Keep the words as they appear in the source, in their original form. Do not add a grammar label.
+If the input is a single word (or two words that are not a phrase), do not return the word alone. Build the most common natural collocation or set phrase with that word, for example "breathtaking" becomes "breathtaking view", "to crave" becomes "crave something". Use the input word inside the chunk.
 Write a short natural Russian translation of the chunk (not of the whole sentence).
 Write one natural example sentence that contains the chunk exactly as written.
 Write the same example with the chunk replaced by "..." (this is the frame).
