@@ -1,7 +1,7 @@
 // Telegram-бот для отработки чанков на Cloudflare Workers.
 // Настройка описана в README.md.
 import { Database } from "./db.js";
-import { checkAnswer, helpFrame, parseBold } from "./feedback.js";
+import { checkAnswer, extractChunk, helpFrame, parseBold } from "./feedback.js";
 import { compareChunks, findDuplicatePairs } from "./similar.js";
 import { makeQuestions } from "./tasks.js";
 import { rememberTerms } from "./terms.js";
@@ -24,6 +24,7 @@ const FRAMES = "✍️ Закончи фразу";
 const LESSONS_TAB = "📅 Занятия";
 const NOTIFICATIONS = "🔔 Уведомления";
 const ADD_CHUNK = "➕ Добавить чанк";
+const LIKED = "💬 Понравилось";
 const NOTES = "📝 Заметки";
 const QUIZ = "🧩 Квиз";
 // Запас до лимита Telegram: к тексту добавляется заголовок с датой.
@@ -59,6 +60,7 @@ const MENU = {
     [{ text: CARDS }, { text: FRAMES }],
     [{ text: QUIZ }, { text: NOTES }],
     [{ text: NOTIFICATIONS }, { text: LESSONS_TAB }],
+    [{ text: LIKED }],
   ],
   resize_keyboard: true,
 };
@@ -1211,6 +1213,21 @@ async function saveStudentChunks(env, db, message, student, text) {
   }
 }
 
+// Фраза, которая понравилась студенту: бот делает строку лексики и просит подтвердить.
+async function saveLiked(env, db, message, student, text) {
+  const chatId = message.chat.id;
+  const row = await extractChunk(env, text);
+  if (!row) {
+    await send(env, chatId, "Не получилось разобрать фразу. Пришли её ещё раз.");
+    return;
+  }
+  await db.setState(message.from.id, { awaiting: "likeConfirm", pendingLike: row });
+  const [chunk, translation, example, frame] = row;
+  await send(env, chatId, `${chunk} | ${translation} | ${example} | ${frame}`, {
+    inline_keyboard: [[inline("✅ Добавить", "likeyes"), inline("✏️ Не надо", "likeno")]],
+  });
+}
+
 async function saveTime(env, db, message, student, text) {
   const match = text.match(/^([01]?\d|2[0-3])[:.]([0-5]\d)$/);
   if (!match) {
@@ -1334,6 +1351,15 @@ async function onText(env, db, message) {
   } else if (text === ADD_CHUNK) {
     await db.setState(userId, { awaiting: "chunk" });
     await send(env, chatId, STUDENT_ADD_FORMAT);
+  } else if (text === LIKED) {
+    await db.setState(userId, { awaiting: "liked" });
+    await send(
+      env,
+      chatId,
+      "Пришли фразу или предложение, которое тебе понравилось. Я сделаю из него чанк с переводом и примером.",
+    );
+  } else if (state.awaiting === "liked") {
+    await saveLiked(env, db, message, student, text);
   } else if (state.awaiting === "chunk") {
     await saveStudentChunks(env, db, message, student, text);
   } else if (state.awaiting === "frame") {
@@ -1635,6 +1661,34 @@ async function onButton(env, db, query) {
       message_id: messageId,
       text: `Прогресс обнулён: ${student.name}.`,
     });
+    return;
+  }
+
+  if (action === "likeyes" || action === "likeno") {
+    const student = await db.studentByTelegram(userId);
+    if (!student) return;
+    const { awaiting, pendingLike, ...rest } = await db.getState(userId);
+    await db.setState(userId, rest);
+    await telegram(env, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId });
+    if (action === "likeno" || !pendingLike) {
+      await send(env, chatId, "Хорошо, не добавляю.");
+      return;
+    }
+    await db.addChunks([student.id], [pendingLike], clock(env).date);
+    await rememberTerms(env, db, [pendingLike[0]]);
+    await db.increment(student.id, "own_chunks", 1);
+    await send(env, chatId, `Добавила: ${pendingLike[0]} ✅ Уже в карточках!`, MENU);
+    if (env.TEACHER_ID) {
+      try {
+        await send(
+          env,
+          env.TEACHER_ID,
+          `${student.name} добавляет лексику:\n\n${pendingLike.join(" | ")}`.slice(0, 4000),
+        );
+      } catch (error) {
+        console.error("Не удалось уведомить преподавателя", error.message);
+      }
+    }
     return;
   }
 
