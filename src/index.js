@@ -24,7 +24,7 @@ const FRAMES = "✍️ Закончи фразу";
 const LESSONS_TAB = "📅 Занятия";
 const NOTIFICATIONS = "🔔 Уведомления";
 const ADD_CHUNK = "➕ Добавить чанк";
-const LIKED = "💬 Понравилось";
+const LIKED = "➕ Добавить";
 const NOTES = "📝 Заметки";
 const QUIZ = "🧩 Квиз";
 // Запас до лимита Telegram: к тексту добавляется заголовок с датой.
