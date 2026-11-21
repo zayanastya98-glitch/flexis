@@ -58,9 +58,8 @@ function frameTask(frame, prefix = "") {
 const MENU = {
   keyboard: [
     [{ text: CARDS }, { text: FRAMES }],
-    [{ text: QUIZ }, { text: NOTES }],
+    [{ text: QUIZ }, { text: LIKED }],
     [{ text: NOTIFICATIONS }, { text: LESSONS_TAB }],
-    [{ text: LIKED }],
   ],
   resize_keyboard: true,
 };
